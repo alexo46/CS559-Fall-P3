@@ -5,7 +5,6 @@ export function createBasicPlane() {
 
     const bodyGeo = new THREE.BoxGeometry(4, 0.6, 20);
     const wingGeo = new THREE.BoxGeometry(8, 0.4, 3);
-    const tailGeo = new THREE.BoxGeometry(1.5, 0.6, 0.2);
 
     const mat = new THREE.MeshStandardMaterial({ color: 0xff5555 });
 
@@ -28,9 +27,20 @@ export function createBasicPlane() {
     horizontalTail.position.set(-4, 0.75, 0);
     tail.add(horizontalTail);
 
+    const engineMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00 });
+    const engine = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 0.5, 0.5),
+        engineMaterial
+    );
+    engine.position.set(0, 0, 10.25);
+    planeGroup.add(engine);
+
     body.castShadow = true;
+    body.receiveShadow = true;
     wing.castShadow = true;
+    wing.receiveShadow = true;
     tail.castShadow = true;
+    tail.receiveShadow = true;
 
     planeGroup.add(body, wing, tail);
     return planeGroup;

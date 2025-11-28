@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { Plane } from "./Plane.js";
 import { SkyEnvironment } from "./environment/Sky.js";
 import { WorldPhysics } from "../physics/WorldPhysics.js";
+import { ForceVisualizer } from "../input/ForceVisualizer.js";
 
 export class World {
     constructor(scene, camera, renderer) {
@@ -10,6 +11,7 @@ export class World {
         this.renderer = renderer;
 
         this.physics = new WorldPhysics();
+        this.forceVisualizer = new ForceVisualizer(this.scene);
 
         this.setupLights();
         this.setupGround();
@@ -44,8 +46,48 @@ export class World {
     }
 
     setupGround() {
-        const geo = new THREE.PlaneGeometry(5000, 5000);
-        const mat = new THREE.MeshStandardMaterial({ color: 0x228b22 });
+        const loader = new THREE.TextureLoader();
+
+        const colorMap = loader.load(
+            new URL(
+                "../assets/textures/grass/Grass_001_COLOR.jpg",
+                import.meta.url
+            ).href
+        );
+        const normalMap = loader.load(
+            new URL(
+                "../assets/textures/grass/Grass_001_NORM.jpg",
+                import.meta.url
+            ).href
+        );
+        const roughnessMap = loader.load(
+            new URL(
+                "../assets/textures/grass/Grass_001_ROUGH.jpg",
+                import.meta.url
+            ).href
+        );
+        const aoMap = loader.load(
+            new URL(
+                "../assets/textures/grass/Grass_001_OCC.jpg",
+                import.meta.url
+            ).href
+        );
+
+        [colorMap, normalMap, roughnessMap, aoMap].forEach((t) => {
+            if (!t) return;
+
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.repeat.set(40, 40);
+        });
+
+        const mat = new THREE.MeshStandardMaterial({
+            map: colorMap,
+            normalMap: normalMap,
+            roughnessMap: roughnessMap,
+            aoMap: aoMap,
+        });
+
+        const geo = new THREE.PlaneGeometry(500, 500);
         const ground = new THREE.Mesh(geo, mat);
         ground.rotation.x = -Math.PI / 2;
         ground.position.y = 0;
@@ -54,7 +96,10 @@ export class World {
     }
 
     setupPlane() {
-        this.plane = new Plane(this.physics.world);
+        this.plane = new Plane(this.physics.world, {
+            detail: "basic",
+            forceVisualizer: this.forceVisualizer,
+        });
         this.scene.add(this.plane.group);
         this.plane.group.position.set(0, 5, 0);
 
@@ -63,8 +108,12 @@ export class World {
         this.camera.lookAt(this.plane.group.position);
     }
 
-    update(dt) {
-        // this.plane.group.rotation.y += 0.2 * dt;
+    update(dt, controls) {
+        if (controls) {
+            this.plane.applyThrottle(controls.throttle);
+        }
+
         this.physics.step(dt);
+        this.plane.update(dt);
     }
 }

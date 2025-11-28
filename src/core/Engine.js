@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { World } from "../game/World.js";
 import { OrbitControls } from "three/examples/jsm/Addons.js";
+import { InputManager } from "../input/InputManager.js";
 
 export class Engine {
     constructor(container) {
@@ -33,6 +34,7 @@ export class Engine {
         this.controls.minDistance = 5;
         this.controls.maxDistance = 200;
 
+        this.input = new InputManager(window);
         this.world = new World(this.scene, this.camera, this.renderer);
 
         this.lastTime = 0;
@@ -56,7 +58,8 @@ export class Engine {
         const dt = (time - this.lastTime) / 1000;
         this.lastTime = time;
 
-        this.world.update(dt);
+        const controls = this.input.update(dt);
+        this.world.update(dt, controls);
 
         // this.renderer.render(this.scene, this.camera);
         this.controls.update();
