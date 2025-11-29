@@ -1,25 +1,38 @@
-import * as CANNON from "cannon-es";
+import * as RAPIER from "@dimforge/rapier3d";
 
 export class WorldPhysics {
     constructor() {
-        this.world = new CANNON.World({
-            gravity: new CANNON.Vec3(0, -9.82, 0),
-        });
-        this.world.broadphase = new CANNON.NaiveBroadphase();
-        this.world.allowSleep = true;
+        this.fixedDt = 1 / 60;
+        this.accumulator = 0;
 
+        this.world = new RAPIER.World({ x: 0, y: -9.82, z: 0 });
         this.createGround();
     }
 
-    step(dt) {
-        this.world.step(1 / 60, dt, 3);
+    createGround() {
+        const groundBody = this.world.createRigidBody(
+            RAPIER.RigidBodyDesc.fixed()
+        );
+
+        const groundCollider = RAPIER.ColliderDesc.cuboid(2500, 0.1, 2500)
+            .setTranslation(0, -0.1, 0)
+            .setFriction(0.9);
+
+        this.world.createCollider(groundCollider, groundBody);
     }
 
-    createGround() {
-        const groundShape = new CANNON.Plane();
-        const groundBody = new CANNON.Body({ mass: 0, shape: groundShape });
-        groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-        groundBody.position.set(0, 0, 0);
-        this.world.addBody(groundBody);
+    step(dt) {
+        this.accumulator += dt;
+        const maxSteps = 5;
+        let steps = 0;
+
+        while (this.accumulator >= this.fixedDt && steps < maxSteps) {
+            this.world.timestep = this.fixedDt;
+            this.world.step();
+            this.accumulator -= this.fixedDt;
+            steps += 1;
+        }
     }
 }
+
+export { RAPIER };

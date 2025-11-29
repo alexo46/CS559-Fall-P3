@@ -1,8 +1,10 @@
 import * as THREE from "three";
+
 import { Plane } from "./Plane.js";
 import { SkyEnvironment } from "./environment/Sky.js";
 import { WorldPhysics } from "../physics/WorldPhysics.js";
 import { ForceVisualizer } from "../input/ForceVisualizer.js";
+import { RapierDebugRenderer } from "../physics/RapierDebugRenderer.js";
 
 export class World {
     constructor(scene, camera, renderer) {
@@ -12,6 +14,11 @@ export class World {
 
         this.physics = new WorldPhysics();
         this.forceVisualizer = new ForceVisualizer(this.scene);
+
+        this.rapierDebugger = new RapierDebugRenderer(
+            this.scene,
+            this.physics.world
+        );
 
         this.setupLights();
         this.setupGround();
@@ -96,14 +103,10 @@ export class World {
     }
 
     setupPlane() {
-        this.plane = new Plane(this.physics.world, {
-            detail: "basic",
+        this.plane = new Plane(this.physics, this.scene, {
             forceVisualizer: this.forceVisualizer,
         });
-        this.scene.add(this.plane.group);
-        this.plane.group.position.set(0, 5, 0);
 
-        // Basic camera position to see the plane
         this.camera.position.set(0, 10, 20);
         this.camera.lookAt(this.plane.group.position);
     }
@@ -113,7 +116,9 @@ export class World {
             this.plane.applyThrottle(controls.throttle);
         }
 
+        this.plane.prePhysicsStep?.(dt);
         this.physics.step(dt);
         this.plane.update(dt);
+        this.rapierDebugger.update();
     }
 }
