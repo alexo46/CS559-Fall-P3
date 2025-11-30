@@ -116,7 +116,6 @@ export class World {
             this.plane.applyThrottle(controls.throttle);
         }
 
-        this.plane.prePhysicsStep?.(dt);
         this.physics.step(dt);
         this.plane.update(dt);
         this.rapierDebugger.update();

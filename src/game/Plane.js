@@ -16,10 +16,10 @@ const SUSPENSION_DAMPING = {
 };
 
 const WHEEL_OFFSETS = [
-    { x: -2.0, y: -1.0, z: 3.5, steer: true, drive: false },
-    { x: 2.0, y: -1.0, z: 3.5, steer: true, drive: false },
-    { x: -2.0, y: -1.0, z: -3.2, steer: false, drive: true },
-    { x: 2.0, y: -1.0, z: -3.2, steer: false, drive: true },
+    { x: -2.0, y: -1.0, z: 3.5, steer: true, drive: true },
+    { x: 2.0, y: -1.0, z: 3.5, steer: true, drive: true },
+    { x: -2.0, y: -1.0, z: -3.2, steer: false, drive: false },
+    { x: 2.0, y: -1.0, z: -3.2, steer: false, drive: false },
 ];
 
 const DEFAULT_WHEEL_SETTINGS = {
@@ -36,7 +36,7 @@ export class Plane {
         this.forceVisualizer = forceVisualizer;
 
         this.group = new THREE.Group();
-        this.maxEngineForce = 1800;
+        this.maxEngineForce = 100;
         this.currentThrottle = 0;
         this.startPosition = new THREE.Vector3(0, 8, 0);
 
@@ -51,6 +51,9 @@ export class Plane {
         this.createBody();
         this.setupVehicleController();
         this.createVisuals();
+
+        this.debug = { hard: [], contact: [], rays: [] };
+        this.createRaycastDebug();
 
         this.scene.add(this.group);
     }
@@ -92,7 +95,6 @@ export class Plane {
         );
 
         this.vehicle.indexUpAxis = 1;
-        this.vehicle.setIndexForwardAxis = 2;
 
         const suspensionDir = { x: 0, y: -1, z: 0 };
         this.suspensionDirVec = new THREE.Vector3(0, -1, 0);
@@ -238,40 +240,125 @@ export class Plane {
         );
 
         if (this.vehicle && this.wheelMeshes.length) {
+            const chassisQuat = this.group.quaternion;
+
             this.wheelMeshes.forEach((wheelMesh, idx) => {
                 if (!wheelMesh) return;
 
-                const hardPoint = this.vehicle.wheelHardPoint(idx);
-                const suspensionLength =
-                    this.vehicle.wheelSuspensionLength(idx) ??
-                    SUSPENSION_REST_LENGTH;
+                const inContact = this.vehicle.wheelIsInContact(idx);
 
-                if (!hardPoint) {
-                    wheelMesh.visible = false;
-                    return;
+                let center = this.tempWheelPos;
+
+                if (inContact) {
+                    const cp = this.vehicle.wheelContactPoint(idx);
+                    const cn = this.vehicle.wheelContactNormal(idx);
+
+                    const normal = new THREE.Vector3(
+                        cn.x,
+                        cn.y,
+                        cn.z
+                    ).normalize();
+
+                    center.set(cp.x, cp.y, cp.z);
+                    center.addScaledVector(normal, WHEEL_RADIUS);
+                } else {
+                    const hardPoint = this.vehicle.wheelHardPoint(idx);
+                    const suspensionLength =
+                        this.vehicle.wheelSuspensionLength(idx) ??
+                        SUSPENSION_REST_LENGTH;
+
+                    const dirWorld = this.tempWheelDir
+                        .copy(this.suspensionDirVec) // (0, -1, 0)
+                        .applyQuaternion(this.group.quaternion)
+                        .normalize();
+
+                    this.tempWheelPos.set(
+                        hardPoint.x,
+                        hardPoint.y,
+                        hardPoint.z
+                    );
+                    this.tempWheelPos.addScaledVector(
+                        dirWorld,
+                        suspensionLength
+                    );
                 }
 
-                wheelMesh.visible = true;
+                wheelMesh.position.copy(center);
+                wheelMesh.quaternion.copy(chassisQuat);
 
+                const roll = this.vehicle.wheelRotation(idx);
+                wheelMesh.rotateX(roll);
+            });
+        }
+
+        if (this.vehicle && this.debug) {
+            for (let i = 0; i < WHEEL_OFFSETS.length; i++) {
+                const hp = this.vehicle.wheelHardPoint(i); // world-space start
+                const inContact = this.vehicle.wheelIsInContact(i);
+                const cp = inContact ? this.vehicle.wheelContactPoint(i) : null;
+
+                // spheres
+                const hpMesh = this.debug.hard[i];
+                const cpMesh = this.debug.contact[i];
+
+                hpMesh.position.set(hp.x, hp.y, hp.z);
+                hpMesh.visible = true;
+
+                if (cp) {
+                    cpMesh.position.set(cp.x, cp.y, cp.z);
+                    cpMesh.visible = true;
+                } else {
+                    cpMesh.visible = false;
+                }
+
+                // ray line: from hard point along suspension direction to max travel
                 const dirWorld = this.tempWheelDir
-                    .copy(this.suspensionDirVec)
-                    .applyQuaternion(this.group.quaternion)
+                    .copy(this.suspensionDirVec) // (0, -1, 0) in chassis space
+                    .applyQuaternion(this.group.quaternion) // to world
                     .normalize();
 
-                this.tempWheelPos.set(hardPoint.x, hardPoint.y, hardPoint.z);
-                this.tempWheelPos.addScaledVector(dirWorld, suspensionLength);
+                const rest = this.vehicle.wheelSuspensionRestLength(i);
+                const travel = this.vehicle.wheelMaxSuspensionTravel(i);
+                const maxLen = rest + travel;
 
-                if (!wheelMesh.userData.initialized) {
-                    wheelMesh.userData.initialized = true;
-                }
+                const start = new THREE.Vector3(hp.x, hp.y, hp.z);
+                const end = start.clone().addScaledVector(dirWorld, -maxLen);
 
-                wheelMesh.position.copy(this.tempWheelPos);
-                wheelMesh.quaternion.copy(this.group.quaternion);
-            });
+                const line = this.debug.rays[i];
+                line.geometry.setFromPoints([start, end]);
+            }
         }
     }
 
-    update() {
+    createRaycastDebug() {
+        const hpMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // green: origin
+        const cpMat = new THREE.MeshBasicMaterial({ color: 0xff0000 }); // red: contact
+        const sphereGeo = new THREE.SphereGeometry(0.15, 8, 8);
+
+        for (let i = 0; i < WHEEL_OFFSETS.length; i++) {
+            const hpMesh = new THREE.Mesh(sphereGeo, hpMat);
+            const cpMesh = new THREE.Mesh(sphereGeo, cpMat);
+            this.scene.add(hpMesh, cpMesh);
+
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(),
+                new THREE.Vector3(),
+            ]);
+            const lineMat = new THREE.LineBasicMaterial({ color: 0xffff00 });
+            const line = new THREE.Line(lineGeo, lineMat);
+            this.scene.add(line);
+
+            this.debug.hard.push(hpMesh);
+            this.debug.contact.push(cpMesh);
+            this.debug.rays.push(line);
+        }
+    }
+
+    update(dt) {
+        if (this.vehicle) {
+            this.vehicle.updateVehicle(dt);
+        }
+
         this.syncGraphicsFromPhysics();
 
         if (Math.abs(this.currentThrottle) < 1e-3) {
