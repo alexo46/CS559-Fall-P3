@@ -1,9 +1,8 @@
 import * as THREE from "three";
 
-import { Plane } from "./Plane.js";
+import { Car } from "./Car.js";
 import { SkyEnvironment } from "./environment/Sky.js";
 import { WorldPhysics } from "../physics/WorldPhysics.js";
-import { ForceVisualizer } from "../input/ForceVisualizer.js";
 import { RapierDebugRenderer } from "../physics/RapierDebugRenderer.js";
 
 export class World {
@@ -13,7 +12,6 @@ export class World {
         this.renderer = renderer;
 
         this.physics = new WorldPhysics();
-        this.forceVisualizer = new ForceVisualizer(this.scene);
 
         this.rapierDebugger = new RapierDebugRenderer(
             this.scene,
@@ -22,7 +20,7 @@ export class World {
 
         this.setupLights();
         this.setupGround();
-        this.setupPlane();
+        this.setupCar();
 
         this.sky = new SkyEnvironment(
             this.scene,
@@ -102,22 +100,24 @@ export class World {
         this.scene.add(ground);
     }
 
-    setupPlane() {
-        this.plane = new Plane(this.physics, this.scene, {
-            forceVisualizer: this.forceVisualizer,
-        });
+    setupCar() {
+        this.car = new Car(this.physics, this.scene);
 
-        this.camera.position.set(0, 10, 20);
-        this.camera.lookAt(this.plane.group.position);
+        this.camera.position.set(0, 6, 14);
+        this.camera.lookAt(this.car.group.position);
     }
 
     update(dt, controls) {
         if (controls) {
-            this.plane.applyThrottle(controls.throttle);
+            this.car.applyControls({
+                drive: controls.drive,
+                steer: controls.steer,
+                brake: controls.brake,
+            });
         }
 
         this.physics.step(dt);
-        this.plane.update(dt);
+        this.car.update(dt);
         this.rapierDebugger.update();
     }
 }

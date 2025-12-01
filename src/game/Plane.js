@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createBasicPlane } from "../assets/models/plane/basic/PlaneBasic.js";
 import { RAPIER } from "../physics/WorldPhysics.js";
 
 const PLANE_DIMENSIONS = {
@@ -16,10 +17,9 @@ const SUSPENSION_DAMPING = {
 };
 
 const WHEEL_OFFSETS = [
-    { x: -2.0, y: -1.0, z: 3.5, steer: true, drive: true },
-    { x: 2.0, y: -1.0, z: 3.5, steer: true, drive: true },
-    { x: -2.0, y: -1.0, z: -3.2, steer: false, drive: false },
-    { x: 2.0, y: -1.0, z: -3.2, steer: false, drive: false },
+    { x: 0, y: -1.0, z: 8.5, steer: true, drive: true },
+    { x: -2.0, y: -1.0, z: -3.2, steer: false, drive: true },
+    { x: 2.0, y: -1.0, z: -3.2, steer: false, drive: true },
 ];
 
 const DEFAULT_WHEEL_SETTINGS = {
@@ -71,23 +71,23 @@ export class Plane {
             .setLinearDamping(0.15)
             .setAngularDamping(0.3);
 
-        this.body = this.physics.world.createRigidBody(bodyDesc);
+        this.chassisBody = this.physics.world.createRigidBody(bodyDesc);
 
         const colliderDesc = RAPIER.ColliderDesc.cuboid(
             width / 2,
             height / 2,
-            length / 2
+            length
         )
             .setFriction(0.85)
             .setRestitution(0.05);
 
-        this.physics.world.createCollider(colliderDesc, this.body);
+        this.physics.world.createCollider(colliderDesc, this.chassisBody);
     }
 
     setupVehicleController() {
         const world = this.physics.world;
         this.vehicle = new RAPIER.DynamicRayCastVehicleController(
-            this.body,
+            this.chassisBody,
             world.broadPhase,
             world.narrowPhase,
             world.bodies,
@@ -146,14 +146,15 @@ export class Plane {
 
     createVisuals() {
         const { width, height, length } = PLANE_DIMENSIONS;
-        const fuselageGeo = new THREE.BoxGeometry(width, height, length);
-        const material = new THREE.MeshStandardMaterial({ color: 0xff5555 });
-        const mesh = new THREE.Mesh(fuselageGeo, material);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+        const planeMesh = createBasicPlane();
+        planeMesh.scale.set(1.2, 1.2, 1.2);
+        planeMesh.position.set(0, 0, 0);
 
-        this.group.add(mesh);
-        this.mesh = mesh;
+        const axes = new THREE.AxesHelper(15);
+        this.group.add(axes);
+
+        this.group.add(planeMesh);
+        this.mesh = planeMesh;
 
         const wheelGeometry = new THREE.CylinderGeometry(
             WHEEL_RADIUS,
@@ -178,32 +179,34 @@ export class Plane {
     }
 
     applyThrottle(throttle = 0) {
-        if (!this.body || !this.vehicle) return;
+        if (!this.chassisBody || !this.vehicle) return;
+        console.log("applyThrottle called with:", throttle);
 
         this.currentThrottle = THREE.MathUtils.clamp(throttle, -1, 1);
+        const engineForce = this.currentThrottle * this.maxEngineForce;
 
         if (Math.abs(this.currentThrottle) < 1e-3) {
             this.forceVisualizer?.clear("engine");
         }
+        this.group.getWorldDirection(this.tempForward);
 
-        const engineForce = this.currentThrottle * this.maxEngineForce;
-
-        const rotation = this.body.rotation();
-        this.tempQuaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
-        this.tempForward
-            .set(0, 0, -1)
-            .applyQuaternion(this.tempQuaternion)
-            .normalize();
+        // const rotation = this.chassisBody.rotation();
+        // this.tempQuaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+        // this.tempForward
+        //     .set(0, 0, 1)
+        //     .applyQuaternion(this.tempQuaternion)
+        //     .normalize();
         this.tempForce.copy(this.tempForward).multiplyScalar(engineForce);
+        console.log("engineForce:", engineForce, "force vec:", this.tempForce);
 
-        this.body.addForce(
+        this.chassisBody.addForce(
             { x: this.tempForce.x, y: this.tempForce.y, z: this.tempForce.z },
             true
         );
 
         if (Math.abs(engineForce) < 1e-2) {
             this.driveWheels.forEach((index) => {
-                this.vehicle.setWheelBrake(index, 10);
+                this.vehicle.setWheelBrake(index, 100);
             });
         } else {
             this.driveWheels.forEach((index) => {
@@ -211,6 +214,7 @@ export class Plane {
             });
         }
 
+        console.log("FOrce visualizer:", this.forceVisualizer);
         if (this.forceVisualizer) {
             this.forceVisualizer.draw(
                 "engine",
@@ -226,10 +230,10 @@ export class Plane {
     }
 
     syncGraphicsFromPhysics() {
-        if (!this.body) return;
+        if (!this.chassisBody) return;
 
-        const translation = this.body.translation();
-        const rotation = this.body.rotation();
+        const translation = this.chassisBody.translation();
+        const rotation = this.chassisBody.rotation();
 
         this.group.position.set(translation.x, translation.y, translation.z);
         this.group.quaternion.set(

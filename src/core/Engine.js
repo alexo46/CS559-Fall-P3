@@ -37,6 +37,11 @@ export class Engine {
         this.input = new InputManager(window);
         this.world = new World(this.scene, this.camera, this.renderer);
 
+        this.lastPlanePosition = null;
+        this.cameraInitialized = false;
+        this.cameraFollowOffset = new THREE.Vector3(0, 6, 18);
+        this.tempVec = new THREE.Vector3();
+
         this.lastTime = 0;
         window.addEventListener("resize", () => this.onResize());
     }
@@ -61,7 +66,26 @@ export class Engine {
         const controls = this.input.update(dt);
         this.world.update(dt, controls);
 
-        // this.renderer.render(this.scene, this.camera);
+        const vehicleGroup = this.world?.car?.group ?? this.world?.plane?.group;
+        if (vehicleGroup) {
+            if (!this.cameraInitialized) {
+                const offset = this.cameraFollowOffset
+                    .clone()
+                    .applyQuaternion(vehicleGroup.quaternion);
+                this.camera.position.copy(vehicleGroup.position).add(offset);
+                this.lastPlanePosition = vehicleGroup.position.clone();
+                this.cameraInitialized = true;
+            } else if (this.lastPlanePosition) {
+                const delta = this.tempVec
+                    .copy(vehicleGroup.position)
+                    .sub(this.lastPlanePosition);
+                this.camera.position.add(delta);
+                this.lastPlanePosition.copy(vehicleGroup.position);
+            }
+
+            this.controls.target.copy(vehicleGroup.position);
+        }
+
         this.controls.update();
         this.renderer.render(this.scene, this.camera);
 
