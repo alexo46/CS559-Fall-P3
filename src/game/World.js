@@ -4,6 +4,10 @@ import { Car } from "./Car.js";
 import { SkyEnvironment } from "./environment/Sky.js";
 import { WorldPhysics } from "../physics/WorldPhysics.js";
 import { RapierDebugRenderer } from "../physics/RapierDebugRenderer.js";
+import {
+    addPhysicsToTrack,
+    createRaceTrack,
+} from "../assets/models/RaceTrack.js";
 
 export class World {
     constructor(scene, camera, renderer) {
@@ -21,6 +25,10 @@ export class World {
         this.setupLights();
         this.setupGround();
         this.setupCar();
+        this.setupRaceTrack();
+
+        const axisHelper = new THREE.AxesHelper(60);
+        this.scene.add(axisHelper);
 
         this.sky = new SkyEnvironment(
             this.scene,
@@ -100,21 +108,30 @@ export class World {
         this.scene.add(ground);
     }
 
+    setupRaceTrack() {
+        this.raceTrack = createRaceTrack();
+        this.raceTrack.position.y = 1;
+        this.scene.add(this.raceTrack);
+
+        this.raceTrack.updateMatrixWorld(true, true);
+        addPhysicsToTrack(this.raceTrack, this.physics.world);
+    }
+
     setupCar() {
         this.car = new Car(this.physics, this.scene);
-
+        // this.car.group.position.set(0, 15, 0);
         this.camera.position.set(0, 6, 14);
         this.camera.lookAt(this.car.group.position);
     }
 
     update(dt, controls) {
-        if (controls) {
-            this.car.applyControls({
-                drive: controls.drive,
-                steer: controls.steer,
-                brake: controls.brake,
-            });
-        }
+        // if (controls) {
+        //     this.car.applyControls({
+        //         drive: controls.drive,
+        //         steer: controls.steer,
+        //         brake: controls.brake,
+        //     });
+        // }
 
         this.physics.step(dt);
         this.car.update(dt);
