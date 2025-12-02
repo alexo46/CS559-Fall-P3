@@ -17,9 +17,9 @@ export class Car {
         this.scene.add(this.group);
 
         // -------- tuning ----------
-        this.maxEngineForce = 400;
+        this.maxEngineForce = 40;
         this.maxBrakeForce = 40;
-        this.maxSteer = 0.5; // ~30°
+        this.maxSteer = 0.7; // ~30°
         this.suspensionRestLength = 0.35;
         this.wheelRadius = 0.5;
 
@@ -73,14 +73,15 @@ export class Car {
         const zOff = halfExtents.z - 0.2;
 
         // 0 = FL, 1 = FR, 2 = RL, 3 = RR (in chassis local space)
-        const wheelPositions = [
-            new RAPIER.Vector3(+xOff, yConn, +zOff),
-            new RAPIER.Vector3(-xOff, yConn, +zOff),
-            new RAPIER.Vector3(+xOff, yConn, -zOff),
-            new RAPIER.Vector3(-xOff, yConn, -zOff),
+        const wheels = [
+            { pos: new RAPIER.Vector3(+xOff, yConn, +zOff), steering: true }, // FL
+            { pos: new RAPIER.Vector3(-xOff, yConn, +zOff), steering: true }, // FR
+            { pos: new RAPIER.Vector3(+xOff, yConn, -zOff), steering: false }, // RL
+            { pos: new RAPIER.Vector3(-xOff, yConn, -zOff), steering: false }, // RR
         ];
+        this.wheels = wheels;
 
-        wheelPositions.forEach((pos) => {
+        wheels.forEach(({ pos }) => {
             this.vehicle.addWheel(
                 pos,
                 directionCs,
@@ -103,8 +104,8 @@ export class Car {
             this.vehicle.setWheelMaxSuspensionForce(i, 1500);
             this.vehicle.setWheelMaxSuspensionTravel(i, 0.4);
 
-            this.vehicle.setWheelFrictionSlip(i, 3.0); // traction
-            this.vehicle.setWheelSideFrictionStiffness(i, 1.0); // sideways grip
+            this.vehicle.setWheelFrictionSlip(i, 6.0); // traction
+            this.vehicle.setWheelSideFrictionStiffness(i, 3.0); // sideways grip
 
             this.vehicle.setWheelBrake(i, 0);
             this.vehicle.setWheelEngineForce(i, 0);
@@ -130,6 +131,9 @@ export class Car {
             this.group.add(mesh); // add wheels into the group
             this.wheelMeshes.push(mesh);
         }
+
+        // per-wheel rolling angle
+        this.wheelAngles = new Array(numWheels).fill(0);
 
         // -------- input state ----------
         this.keys = {};
@@ -162,7 +166,6 @@ export class Car {
         this.brakeInput = brake;
     }
 
-    // call from your World.update(dt) BEFORE stepping physics
     update(dt) {
         this.handleInput();
 
@@ -176,10 +179,11 @@ export class Car {
             if (i >= 2) this.vehicle.setWheelEngineForce(i, engineForce);
             else this.vehicle.setWheelEngineForce(i, 0);
 
+            console.log(steerAngle);
             // front steering
-            if (i === 0) this.vehicle.setWheelSteering(i, +steerAngle); // FL
+            if (i === 0) this.vehicle.setWheelSteering(i, steerAngle); // FL
             else if (i === 1)
-                this.vehicle.setWheelSteering(i, -steerAngle); // FR
+                this.vehicle.setWheelSteering(i, steerAngle); // FR
             else this.vehicle.setWheelSteering(i, 0);
 
             this.vehicle.setWheelBrake(i, brakeForce);
@@ -201,7 +205,13 @@ export class Car {
         const chassisQuat = new THREE.Quaternion(r.x, r.y, r.z, r.w);
         const invChassisQuat = chassisQuat.clone().invert();
 
-        // wheels: convert world-space wheel position to local space under group
+        // get chassis linear velocity in local space to compute wheel rolling speed
+        const linvel = this.chassisBody.linvel();
+        const vWorld = new THREE.Vector3(linvel.x, linvel.y, linvel.z);
+        const vLocal = vWorld.clone().applyQuaternion(invChassisQuat);
+        const forwardSpeed = vLocal.z; // +Z is forward
+        const wheelAngularVel = forwardSpeed / this.wheelRadius; // rad/s
+
         for (let i = 0; i < numWheels; i++) {
             const hp = this.vehicle.wheelHardPoint(i);
             const len = this.vehicle.wheelSuspensionLength(i);
@@ -218,8 +228,18 @@ export class Car {
 
             const mesh = this.wheelMeshes[i];
             mesh.position.copy(localPos);
-            // keep wheel local rotation simple; group handles global rotation
-            mesh.rotation.set(0, 0, 0);
+
+            // --- update rolling angle ---
+            this.wheelAngles[i] += wheelAngularVel * dt;
+
+            // if it is as steering wheel, apply steer rotation
+            if (this.wheels[i].steering) {
+                const qSteer = new THREE.Quaternion().setFromAxisAngle(
+                    new THREE.Vector3(0, 1, 0),
+                    steerAngle
+                );
+                mesh.quaternion.copy(qSteer);
+            }
         }
     }
 }

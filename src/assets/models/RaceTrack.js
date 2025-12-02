@@ -181,7 +181,7 @@ export function createRaceTrack(options = {}) {
 
     // ----- Curbs (unchanged from your version) -----
     const curbWidth = 1.2;
-    const curbHeight = 0.2;
+    const curbHeight = 0;
     const curbUpOffset = curbHeight / 2 + 0.02;
 
     const redMat = new THREE.MeshStandardMaterial({
@@ -195,106 +195,113 @@ export function createRaceTrack(options = {}) {
         roughness: 0.5,
     });
 
-    function buildCurbs(sideSign) {
-        const evenPositions = [];
-        const oddPositions = [];
-        const evenIndices = [];
-        const oddIndices = [];
-        let evenBase = 0;
-        let oddBase = 0;
+    // normalized [0,1] ranges along the track where curbs exist
+    const leftCurbRanges = [
+        { start: 0.05, end: 0.25 },
+        { start: 0.6, end: 0.85 },
+    ];
 
+    const rightCurbRanges = [
+        { start: 0.1, end: 0.3 },
+        { start: 0.7, end: 0.95 },
+    ];
+
+    function tInRanges(t, ranges) {
+        for (const r of ranges) {
+            if (r.start <= r.end) {
+                // normal segment
+                if (t >= r.start && t < r.end) return true;
+            } else {
+                // wrap-around segment, e.g. start=0.8, end=0.1
+                if (t >= r.start || t < r.end) return true;
+            }
+        }
+        return false;
+    }
+
+    function buildCurbs(sideSign, ranges) {
         const upVec = new THREE.Vector3(0, 1, 0);
 
-        for (let i = 0; i < segments; i++) {
-            let t0 = i / segments;
-            let t1 = (i + 1) / segments;
-            if (t1 > 1) t1 -= 1;
-
-            const p0 = curve.getPointAt(t0);
-            const p1 = curve.getPointAt(t1);
-            const tangent0 = curve.getTangentAt(t0).normalize();
+        // ---- 1) shared vertices along the whole track ----
+        const verts = [];
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const p = curve.getPointAt(t);
+            const tangent = curve.getTangentAt(t).normalize();
 
             const side = new THREE.Vector3()
-                .crossVectors(upVec, tangent0)
+                .crossVectors(upVec, tangent)
                 .normalize()
                 .multiplyScalar(sideSign);
 
-            const inner0 = p0.clone().addScaledVector(side, halfWidth);
-            const inner1 = p1.clone().addScaledVector(side, halfWidth);
-            const outer0 = inner0.clone().addScaledVector(side, curbWidth);
-            const outer1 = inner1.clone().addScaledVector(side, curbWidth);
+            const inner = p.clone().addScaledVector(side, halfWidth);
+            const outer = inner.clone().addScaledVector(side, curbWidth);
 
-            inner0.y += curbUpOffset;
-            inner1.y += curbUpOffset;
-            outer0.y += curbUpOffset;
-            outer1.y += curbUpOffset;
+            inner.y += curbUpOffset;
+            outer.y += curbUpOffset;
 
-            const isEven = i % 2 === 0;
-            const posArray = isEven ? evenPositions : oddPositions;
-            const idxArray = isEven ? evenIndices : oddIndices;
-            const baseIndex = isEven ? evenBase : oddBase;
-
-            posArray.push(
-                inner0.x,
-                inner0.y,
-                inner0.z,
-                inner1.x,
-                inner1.y,
-                inner1.z,
-                outer1.x,
-                outer1.y,
-                outer1.z,
-                outer0.x,
-                outer0.y,
-                outer0.z
-            );
-
-            idxArray.push(
-                baseIndex,
-                baseIndex + 1,
-                baseIndex + 2,
-                baseIndex,
-                baseIndex + 2,
-                baseIndex + 3
-            );
-
-            if (isEven) {
-                evenBase += 4;
-            } else {
-                oddBase += 4;
-            }
+            verts.push(inner, outer);
         }
 
+        const positions = new Float32Array(verts.length * 3);
+        for (let i = 0; i < verts.length; i++) {
+            positions[i * 3 + 0] = verts[i].x;
+            positions[i * 3 + 1] = verts[i].y;
+            positions[i * 3 + 2] = verts[i].z;
+        }
+
+        const evenIndices = [];
+        const oddIndices = [];
+        const vertCountPerRing = 2;
+
+        for (let i = 0; i < segments; i++) {
+            const t0 = i / segments;
+            const t1 = (i + 1) / segments;
+            const tMid = (t0 + t1) * 0.5;
+
+            // 👇 skip this segment entirely if it's not in any active range
+            if (!tInRanges(tMid, ranges)) continue;
+
+            const isEven = i % 2 === 0;
+            const idxArray = isEven ? evenIndices : oddIndices;
+
+            const currInner = i * vertCountPerRing;
+            const currOuter = currInner + 1;
+            const nextInner = ((i + 1) % (segments + 1)) * vertCountPerRing;
+            const nextOuter = nextInner + 1;
+
+            idxArray.push(
+                currInner,
+                nextInner,
+                nextOuter,
+                currInner,
+                nextOuter,
+                currOuter
+            );
+        }
+
+        const positionAttr = new THREE.Float32BufferAttribute(positions, 3);
+
         const evenGeom = new THREE.BufferGeometry();
-        evenGeom.setAttribute(
-            "position",
-            new THREE.Float32BufferAttribute(evenPositions, 3)
-        );
+        evenGeom.setAttribute("position", positionAttr);
         evenGeom.setIndex(evenIndices);
         evenGeom.computeVertexNormals();
 
         const oddGeom = new THREE.BufferGeometry();
-        oddGeom.setAttribute(
-            "position",
-            new THREE.Float32BufferAttribute(oddPositions, 3)
-        );
+        oddGeom.setAttribute("position", positionAttr);
         oddGeom.setIndex(oddIndices);
         oddGeom.computeVertexNormals();
 
         const redMesh = new THREE.Mesh(evenGeom, redMat);
         const whiteMesh = new THREE.Mesh(oddGeom, whiteMat);
-
-        // redMesh.castShadow = whiteMesh.castShadow = true;
-        // redMesh.receiveShadow = whiteMesh.receiveShadow = true;
-
         trackGroup.add(redMesh, whiteMesh);
     }
 
-    buildCurbs(+1);
-    buildCurbs(-1);
+    buildCurbs(+1, leftCurbRanges); // left side
+    buildCurbs(-1, rightCurbRanges);
 
     // ----- Barrier that follows height of the curve -----
-    const barrierOffset = roadWidth / 2 + 0.5;
+    const barrierOffset = roadWidth / 2 + 1.5;
     const barrierRadius = 0.4;
 
     function makeBarrier(sideSign) {
