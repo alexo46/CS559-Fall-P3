@@ -4,10 +4,8 @@ import { Car } from "./Car.js";
 import { SkyEnvironment } from "./environment/Sky.js";
 import { WorldPhysics } from "../physics/WorldPhysics.js";
 import { RapierDebugRenderer } from "../physics/RapierDebugRenderer.js";
-import {
-    addPhysicsToTrack,
-    createRaceTrack,
-} from "../assets/models/RaceTrack.js";
+import { createRaceTrack } from "../assets/models/racetrack/RaceTrack.js";
+import { Speedometer } from "../ui/Speedometer.js";
 
 export class World {
     constructor(scene, camera, renderer) {
@@ -17,15 +15,10 @@ export class World {
 
         this.physics = new WorldPhysics();
 
-        this.rapierDebugger = new RapierDebugRenderer(
-            this.scene,
-            this.physics.world
-        );
-
-        this.setupLights();
-        this.setupGround();
-        this.setupCar();
-        this.setupRaceTrack();
+        // this.rapierDebugger = new RapierDebugRenderer(
+        //     this.scene,
+        //     this.physics.world
+        // );
 
         const axisHelper = new THREE.AxesHelper(60);
         this.scene.add(axisHelper);
@@ -36,6 +29,13 @@ export class World {
             this.sunLight,
             {}
         );
+    }
+
+    async init() {
+        this.setupLights();
+        // this.setupGround();
+        await this.setupRaceTrack();
+        this.setupCar();
     }
 
     setupLights() {
@@ -108,33 +108,57 @@ export class World {
         this.scene.add(ground);
     }
 
-    setupRaceTrack() {
-        this.raceTrack = createRaceTrack();
-        this.raceTrack.position.y = 1;
-        this.scene.add(this.raceTrack);
+    async setupRaceTrack() {
+        const raceTrack = createRaceTrack({
+            world: this.physics.world,
+            extraObjects: [
+                // { name: "grandstand", file: "grandstand.glb" },
+                // { name: "lamp_post", file: "lamp_post.glb" },
+            ],
+            onObjectLoaded: ({ def, object, trackGroup, RAPIER }) => {
+                // e.g. add physics colliders here if you want
+                // or tweak materials / shadow settings
+                object.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
 
-        this.raceTrack.updateMatrixWorld(true, true);
-        addPhysicsToTrack(this.raceTrack, this.physics.world);
+                        if (child.material && child.material.map) {
+                            child.material.map.anisotropy =
+                                this.renderer.capabilities.getMaxAnisotropy();
+                        }
+                    }
+                });
+            },
+        });
+
+        // somewhere after creation:
+        this.scene.add(raceTrack);
+
+        // Set scale BEFORE waiting for load, so colliders pick it up
+        await raceTrack.userData.loadPromise;
+
+        this.raceTrack = raceTrack;
     }
 
     setupCar() {
-        this.car = new Car(this.physics, this.scene);
-        // this.car.group.position.set(0, 15, 0);
+        this.car = new Car(this.physics, this.scene, true);
         this.camera.position.set(0, 6, 14);
         this.camera.lookAt(this.car.group.position);
+
+        this.speedometer = new Speedometer();
+        this.speedometer.visible = true;
     }
 
     update(dt, controls) {
-        // if (controls) {
-        //     this.car.applyControls({
-        //         drive: controls.drive,
-        //         steer: controls.steer,
-        //         brake: controls.brake,
-        //     });
-        // }
+        const speed = this.car.getCarMph();
+        const rpm = this.car.getRPM();
+        this.speedometer.updateSpeed(speed);
+        this.speedometer.updateRPM(rpm);
+        this.speedometer.draw();
 
         this.physics.step(dt);
         this.car.update(dt);
-        this.rapierDebugger.update();
+        // this.rapierDebugger.update();
     }
 }

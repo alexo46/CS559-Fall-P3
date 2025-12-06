@@ -1,13 +1,16 @@
 // src/game/Car.js
 import * as THREE from "three";
 import { RAPIER } from "../physics/WorldPhysics.js";
+import { VehicleDebugPanel } from "../ui/VehicleDebugPanel.js";
+import { loadCarModel } from "../assets/models/car/CarModelLoader.js";
 
 export class Car {
     /**
      * @param {import("../physics/WorldPhysics.js").WorldPhysics} physics
      * @param {THREE.Scene} scene
+     * @param {boolean} detailed
      */
-    constructor(physics, scene) {
+    constructor(physics, scene, detailed = false) {
         this.physics = physics;
         this.world = physics.world;
         this.scene = scene;
@@ -16,15 +19,43 @@ export class Car {
         this.group = new THREE.Group();
         this.scene.add(this.group);
 
+        this.debugPanel = new VehicleDebugPanel();
+        this.debugPanel.visible = true;
+
         // -------- tuning ----------
-        this.maxEngineForce = 40;
-        this.maxBrakeForce = 40;
+        this.maxEngineForce = 500;
+        this.maxBrakeForce = 50;
         this.maxSteer = 0.7; // ~30°
         this.suspensionRestLength = 0.35;
         this.wheelRadius = 0.5;
 
+        // -------- Engine & Transmission ----------
+        this.rpm = 1000;
+        this.idleRpm = 1000;
+        this.maxRpm = 8000;
+        this.currentGear = 1; // -1=R, 0=N, 1=1st...
+        this.gearRatios = {
+            "-1": 3.0,
+            0: 0,
+            1: 3.27,
+            2: 2.13,
+            3: 1.52,
+            4: 1.16,
+            5: 0.97,
+            6: 0.77,
+        };
+        this.finalDrive = 3.4;
+        this.shiftUpRpm = 7200;
+        this.shiftDownRpm = 3000;
+        this.lastShiftTime = 0;
+        this.shiftDuration = 0.2;
+        this.engineBaseForce = 600;
+        this.dragCoeff = 0.02;
+        this.downforceCoeff = 0.1;
+
         // -------- chassis body ----------
         const halfExtents = { x: 1.0, y: 0.35, z: 2.0 }; // Rapier cuboid half-sizes
+        this.chassisHalfExtents = halfExtents;
 
         const rbDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(0, 5, 0)
@@ -41,22 +72,13 @@ export class Car {
             halfExtents.z
         )
             .setTranslation(0, -0.25, 0)
-            .setFriction(1.0);
+            .setFriction(1.0)
+            .setMass(200);
 
         this.world.createCollider(colDesc, this.chassisBody);
 
         // -------- chassis mesh ----------
-        const chassisGeo = new THREE.BoxGeometry(
-            halfExtents.x * 2,
-            halfExtents.y * 2,
-            halfExtents.z * 2
-        );
-        const chassisMat = new THREE.MeshStandardMaterial({ color: 0x3366ff });
-        this.chassisMesh = new THREE.Mesh(chassisGeo, chassisMat);
-        this.chassisMesh.castShadow = true;
-        this.chassisMesh.receiveShadow = true;
-        // IMPORTANT: add to group, not scene directly
-        this.group.add(this.chassisMesh);
+        this.chassisMesh = null;
 
         // -------- vehicle controller (DynamicRayCastVehicleController under the hood) ----------
         this.vehicle = this.world.createVehicleController(this.chassisBody);
@@ -92,20 +114,30 @@ export class Car {
         });
 
         const numWheels = this.vehicle.numWheels();
+
         for (let i = 0; i < numWheels; i++) {
+            const isFront = i < 2; // 0,1 = front
+            const isRear = !isFront; // 2,3 = rear
+
+            // Same rest length for now
             this.vehicle.setWheelSuspensionRestLength(
                 i,
                 this.suspensionRestLength
             );
-            this.vehicle.setWheelSuspensionStiffness(i, 40.0);
-            this.vehicle.setWheelSuspensionCompression(i, 4.0);
-            this.vehicle.setWheelSuspensionRelaxation(i, 6.0);
 
-            this.vehicle.setWheelMaxSuspensionForce(i, 1500);
-            this.vehicle.setWheelMaxSuspensionTravel(i, 0.4);
+            // Stiffer rear so it doesn't squat and flip
+            this.vehicle.setWheelSuspensionStiffness(i, isRear ? 50.0 : 40.0);
+            this.vehicle.setWheelSuspensionCompression(i, isRear ? 5.0 : 4.0);
+            this.vehicle.setWheelSuspensionRelaxation(i, isRear ? 6.0 : 5.0);
 
-            this.vehicle.setWheelFrictionSlip(i, 6.0); // traction
-            this.vehicle.setWheelSideFrictionStiffness(i, 3.0); // sideways grip
+            // Rear can support more load
+            this.vehicle.setWheelMaxSuspensionForce(i, isRear ? 4000 : 3000);
+            this.vehicle.setWheelMaxSuspensionTravel(i, 0.35);
+
+            // Grip
+            this.vehicle.setWheelFrictionSlip(i, 4.0); // Moderate friction
+            // Slightly more lateral grip on the front for turn-in
+            this.vehicle.setWheelSideFrictionStiffness(i, isFront ? 5.0 : 4.0);
 
             this.vehicle.setWheelBrake(i, 0);
             this.vehicle.setWheelEngineForce(i, 0);
@@ -114,26 +146,29 @@ export class Car {
 
         // -------- wheel meshes (children of group) ----------
         this.wheelMeshes = [];
-        const wheelGeo = new THREE.CylinderGeometry(
-            this.wheelRadius,
-            this.wheelRadius,
-            0.4,
-            16
-        );
-        wheelGeo.rotateZ(Math.PI / 2); // roll along Z
-
-        const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
-
         for (let i = 0; i < numWheels; i++) {
-            const mesh = new THREE.Mesh(wheelGeo, wheelMat);
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
-            this.group.add(mesh); // add wheels into the group
-            this.wheelMeshes.push(mesh);
+            const slot = new THREE.Group();
+            this.group.add(slot);
+            this.wheelMeshes.push(slot);
         }
 
-        // per-wheel rolling angle
-        this.wheelAngles = new Array(numWheels).fill(0);
+        loadCarModel({ detailed, wheelRadius: this.wheelRadius })
+            .then(({ chassisMesh, wheelMeshes }) => {
+                if (chassisMesh) {
+                    this.chassisMesh = chassisMesh;
+                    this.group.add(chassisMesh);
+                }
+
+                if (Array.isArray(wheelMeshes)) {
+                    wheelMeshes.forEach((mesh, idx) => {
+                        if (!mesh || !this.wheelMeshes[idx]) return;
+                        this.wheelMeshes[idx].add(mesh);
+                    });
+                }
+            })
+            .catch((error) => {
+                console.error("Error loading car model:", error);
+            });
 
         // -------- input state ----------
         this.keys = {};
@@ -143,10 +178,23 @@ export class Car {
 
         window.addEventListener("keydown", (e) => {
             this.keys[e.code] = true;
+
+            if (e.code === "F3") {
+                this.debugPanel.visible = !this.debugPanel.visible;
+            }
         });
         window.addEventListener("keyup", (e) => {
             this.keys[e.code] = false;
         });
+    }
+
+    getCarMph() {
+        const linvel = this.chassisBody.linvel();
+        const speedMs = Math.sqrt(
+            linvel.x * linvel.x + linvel.y * linvel.y + linvel.z * linvel.z
+        );
+        const speedMph = speedMs * 2.23694;
+        return speedMph;
     }
 
     handleInput() {
@@ -166,24 +214,105 @@ export class Car {
         this.brakeInput = brake;
     }
 
+    getRPM() {
+        return this.rpm;
+    }
+
+    getGear() {
+        return this.currentGear;
+    }
+
     update(dt) {
         this.handleInput();
+        const time = performance.now() / 1000;
 
-        const numWheels = this.vehicle.numWheels();
-        const engineForce = this.maxEngineForce * this.engineInput;
-        const steerAngle = this.maxSteer * this.steerInput;
+        // 1. Determine Speed & Direction
+        const speedMph = this.getCarMph();
+        const speedMs = speedMph * 0.44704;
+
+        // 2. Automatic Gearbox Logic
+        // Switch to Reverse if stopped and braking
+        if (this.engineInput < 0 && speedMph < 3 && this.currentGear > 0) {
+            this.currentGear = -1;
+        }
+        // Switch to 1st if throttle and in Reverse/Neutral
+        else if (this.engineInput > 0 && this.currentGear <= 0) {
+            this.currentGear = 1;
+        }
+
+        // Automatic Shifting
+        if (this.currentGear > 0 && time - this.lastShiftTime > 0.5) {
+            if (this.rpm > this.shiftUpRpm && this.currentGear < 6) {
+                this.currentGear++;
+                this.lastShiftTime = time;
+            } else if (this.rpm < this.shiftDownRpm && this.currentGear > 1) {
+                this.currentGear--;
+                this.lastShiftTime = time;
+            }
+        }
+
+        const isShifting = time - this.lastShiftTime < this.shiftDuration;
+
+        // 3. Calculate RPM
+        const wheelRotSpeed = speedMs / this.wheelRadius; // rad/s
+        const wheelRpm = wheelRotSpeed * 9.5493; // rad/s to rpm
+        const ratio = this.gearRatios[String(this.currentGear)] || 0;
+
+        let targetRpm = Math.abs(wheelRpm * ratio * this.finalDrive);
+
+        // Clutch slip / Idle / Revving in Neutral
+        if (targetRpm < this.idleRpm) {
+            targetRpm = this.idleRpm;
+            // Revving while stopped
+            if (Math.abs(speedMph) < 1.5 && this.engineInput !== 0) {
+                targetRpm += Math.abs(this.engineInput) * 4000;
+            }
+        }
+
+        // Smooth RPM
+        this.rpm = THREE.MathUtils.lerp(this.rpm, targetRpm, 0.15);
+        if (this.rpm > this.maxRpm) this.rpm = this.maxRpm;
+
+        // 4. Calculate Torque & Force
+        // Curve: 8000 - 7100*e^(-2.4t) implies torque drops as RPM rises
+        const normRpm =
+            (this.rpm - this.idleRpm) / (this.maxRpm - this.idleRpm);
+        let torqueFactor = 1.0 - 0.4 * normRpm; // Linear drop from 1.0 to 0.6 (more power at high RPM)
+        if (torqueFactor < 0.1) torqueFactor = 0.1;
+
+        let force = 0;
+        if (this.currentGear !== 0 && !isShifting) {
+            // Force = Input * Base * Torque * Ratio * Final
+            // Note: engineInput is -1 to 1.
+            // If Gear > 0 (Forward): Input > 0 -> Positive Force. Input < 0 -> Negative Force (Braking/Reverse torque).
+            // If Gear < 0 (Reverse): Input < 0 -> Negative Force (Accelerating backwards). Input > 0 -> Positive Force (Braking).
+
+            const speedMs = speedMph * 0.44704;
+
+            // at 0 m/s -> 20% of force, at >= 10 m/s -> 100%
+            const launchScale = THREE.MathUtils.clamp(speedMs / 10, 0.2, 1.0);
+
+            // absolute ratio for calculation, direction comes from input
+            force =
+                launchScale *
+                this.engineInput *
+                this.engineBaseForce *
+                torqueFactor *
+                Math.abs(ratio) *
+                this.finalDrive;
+        }
+
         const brakeForce = this.brakeInput ? this.maxBrakeForce : 0;
+        const steerAngle = this.maxSteer * this.steerInput;
+        const numWheels = this.vehicle.numWheels();
 
         for (let i = 0; i < numWheels; i++) {
             // rear-wheel drive
-            if (i >= 2) this.vehicle.setWheelEngineForce(i, engineForce);
+            if (i >= 2) this.vehicle.setWheelEngineForce(i, force);
             else this.vehicle.setWheelEngineForce(i, 0);
 
-            console.log(steerAngle);
             // front steering
-            if (i === 0) this.vehicle.setWheelSteering(i, steerAngle); // FL
-            else if (i === 1)
-                this.vehicle.setWheelSteering(i, steerAngle); // FR
+            if (i < 2) this.vehicle.setWheelSteering(i, steerAngle);
             else this.vehicle.setWheelSteering(i, 0);
 
             this.vehicle.setWheelBrake(i, brakeForce);
@@ -210,11 +339,25 @@ export class Car {
         const vWorld = new THREE.Vector3(linvel.x, linvel.y, linvel.z);
         const vLocal = vWorld.clone().applyQuaternion(invChassisQuat);
         const forwardSpeed = vLocal.z; // +Z is forward
-        const wheelAngularVel = forwardSpeed / this.wheelRadius; // rad/s
+        const lateralSpeed = vLocal.x; // +X is right
+        const wheelDebug = [];
+        const wheelLabels = ["FL", "FR", "RL", "RR"];
 
         for (let i = 0; i < numWheels; i++) {
             const hp = this.vehicle.wheelHardPoint(i);
             const len = this.vehicle.wheelSuspensionLength(i);
+            const compression = Math.max(
+                0,
+                this.suspensionRestLength -
+                    Math.min(this.suspensionRestLength, len)
+            );
+            const inContact = len < this.suspensionRestLength - 0.002;
+            wheelDebug[i] = {
+                label: wheelLabels[i] || `W${i}`,
+                length: len,
+                compression,
+                inContact,
+            };
 
             const wx = hp.x;
             const wy = hp.y - len;
@@ -229,17 +372,40 @@ export class Car {
             const mesh = this.wheelMeshes[i];
             mesh.position.copy(localPos);
 
-            // --- update rolling angle ---
-            this.wheelAngles[i] += wheelAngularVel * dt;
+            // Rotation: Steering (Y) * Rolling (X)
+            const steering = this.vehicle.wheelSteering(i);
+            const rotation = this.vehicle.wheelRotation(i);
 
-            // if it is as steering wheel, apply steer rotation
-            if (this.wheels[i].steering) {
-                const qSteer = new THREE.Quaternion().setFromAxisAngle(
-                    new THREE.Vector3(0, 1, 0),
-                    steerAngle
-                );
-                mesh.quaternion.copy(qSteer);
-            }
+            const qSteer = new THREE.Quaternion().setFromAxisAngle(
+                new THREE.Vector3(0, 1, 0),
+                steering
+            );
+            const qRoll = new THREE.Quaternion().setFromAxisAngle(
+                new THREE.Vector3(-1, 0, 0),
+                rotation
+            );
+
+            mesh.quaternion.copy(qSteer).multiply(qRoll);
+        }
+
+        if (this.debugPanel) {
+            const dragForce = this.dragCoeff * speedMs * speedMs;
+            const downforce = this.downforceCoeff * speedMs * speedMs;
+
+            this.debugPanel.update({
+                speedMph,
+                forwardSpeed,
+                lateralSpeed,
+                engineInput: this.engineInput,
+                brakeInput: this.brakeInput,
+                steerInput: this.steerInput,
+                gear: this.currentGear,
+                rpm: this.rpm,
+                engineForce: force,
+                downforce,
+                drag: dragForce,
+                wheels: wheelDebug,
+            });
         }
     }
 }

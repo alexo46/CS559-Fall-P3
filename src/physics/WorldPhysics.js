@@ -13,25 +13,20 @@ export class WorldPhysics {
         const groundBody = this.world.createRigidBody(
             RAPIER.RigidBodyDesc.fixed()
         );
-
         const groundCollider = RAPIER.ColliderDesc.cuboid(2500, 0.1, 2500)
             .setTranslation(0, -0.1, 0)
             .setFriction(0.9);
-
         this.world.createCollider(groundCollider, groundBody);
     }
 
     step(dt) {
-        this.accumulator += dt;
-        const maxSteps = 5;
-        let steps = 0;
+        // Clamp dt so pausing the tab etc. doesn't blow things up
+        const maxDt = 1 / 30; // ~33ms
+        const minDt = 1 / 240; // ~4ms, optional
+        const clampedDt = Math.max(minDt, Math.min(dt, maxDt));
 
-        while (this.accumulator >= this.fixedDt && steps < maxSteps) {
-            this.world.timestep = this.fixedDt;
-            this.world.step();
-            this.accumulator -= this.fixedDt;
-            steps += 1;
-        }
+        this.world.timestep = clampedDt;
+        this.world.step();
     }
 }
 

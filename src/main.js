@@ -2,5 +2,10 @@ import { Engine } from "./core/Engine.js";
 
 const container = document.getElementById("app") || document.body;
 
-const engine = new Engine(container);
-engine.start();
+async function main() {
+    const engine = new Engine(container);
+    await engine.init(); // waits for World.init (track + car)
+    engine.start();
+}
+
+main();

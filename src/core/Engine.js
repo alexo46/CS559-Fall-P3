@@ -35,7 +35,6 @@ export class Engine {
         this.controls.maxDistance = 200;
 
         this.input = new InputManager(window);
-        this.world = new World(this.scene, this.camera, this.renderer);
 
         this.lastPlanePosition = null;
         this.cameraInitialized = false;
@@ -44,6 +43,11 @@ export class Engine {
 
         this.lastTime = 0;
         window.addEventListener("resize", () => this.onResize());
+    }
+
+    async init() {
+        this.world = new World(this.scene, this.camera, this.renderer);
+        await this.world.init(); // waits for racetrack, then car
     }
 
     onResize() {
