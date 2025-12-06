@@ -1,12 +1,17 @@
 import * as THREE from "three";
-import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-const WHEEL_NAMES = [
-    "wheela:3DWheel Front L",
-    "wheela:3DWheel Front R",
-    "wheela:3DWheel Rear L",
-    "wheela:3DWheel Rear R",
+const ASSET_BASE_PATH = "/src/assets/models/car/nissan_detailed/";
+
+// Order: 0=FL, 1=FR, 2=RL, 3=RR to match Car.js wheel slots
+const WHEEL_FILES = [
+    "tire_fl.glb",
+    "tire_fr.glb",
+    "tire_bl.glb",
+    "tire_br.glb",
 ];
+
+const resolveAssetPath = (fileName) => `${ASSET_BASE_PATH}${fileName}`;
 
 function createSimpleChassis(wheelRadius) {
     const halfExtents = { x: 1.0, y: 0.35, z: 2.0 };
@@ -39,44 +44,94 @@ function createSimpleChassis(wheelRadius) {
     return { chassisMesh, wheelMeshes: wheels };
 }
 
+function loadWheelMeshes(scale = 1) {
+    const loader = new GLTFLoader();
+
+    return Promise.all(
+        WHEEL_FILES.map((fileName, index) => {
+            const url = resolveAssetPath(fileName);
+
+            return new Promise((resolve) => {
+                loader.load(
+                    url,
+                    (gltf) => {
+                        const root = gltf.scene || gltf.scenes?.[0];
+                        if (!root) {
+                            console.warn(
+                                `Wheel GLB missing scene: ${fileName}`
+                            );
+                            resolve(null);
+                            return;
+                        }
+
+                        root.scale.set(scale, scale, scale);
+                        root.position.set(0, 0, 0);
+                        root.rotation.set(0, 0, 0);
+
+                        root.traverse((child) => {
+                            if (child.isMesh) {
+                                child.castShadow = true;
+                                child.receiveShadow = true;
+                            }
+                        });
+
+                        const pivot = new THREE.Group();
+                        pivot.add(root);
+
+                        root.updateWorldMatrix(true, true);
+                        const box = new THREE.Box3().setFromObject(root);
+                        if (!box.isEmpty()) {
+                            const center = box.getCenter(new THREE.Vector3());
+                            root.position.sub(center);
+                            root.updateWorldMatrix(true, true);
+                        }
+
+                        resolve(pivot);
+                    },
+                    undefined,
+                    (error) => {
+                        console.error(
+                            `Failed to load wheel model ${fileName}`,
+                            error
+                        );
+                        resolve(null);
+                    }
+                );
+            });
+        })
+    );
+}
+
 function loadDetailedChassis() {
-    const loader = new FBXLoader();
-    const url = new URL(
-        "./nissan_detailed/DECIMATED_MODEL_S14.fbx",
-        import.meta.url
-    ).href;
+    const loader = new GLTFLoader();
+    const url = resolveAssetPath("car.glb");
 
     return new Promise((resolve, reject) => {
         loader.load(
             url,
-            (fbx) => {
-                const scale = 0.01;
-                fbx.scale.set(scale, scale, scale);
-                fbx.position.y = -0.5;
+            (gltf) => {
+                const scene = gltf.scene || gltf.scenes?.[0];
+                if (!scene) {
+                    reject(new Error("No scene found in car GLB"));
+                    return;
+                }
 
-                fbx.traverse((child) => {
+                const scale = 1;
+                scene.scale.set(scale, scale, scale);
+                scene.position.y = -0.5;
+
+                scene.traverse((child) => {
                     if (child.isMesh) {
                         child.castShadow = true;
                         child.receiveShadow = true;
                     }
                 });
 
-                const wheels = new Array(4).fill(null);
-                WHEEL_NAMES.forEach((name, index) => {
-                    const foundWheel = fbx.getObjectByName(name);
-                    if (!foundWheel) {
-                        console.warn(`Could not find wheel mesh: ${name}`);
-                        return;
-                    }
-
-                    foundWheel.parent.remove(foundWheel);
-                    foundWheel.position.set(0, 0, 0);
-                    foundWheel.rotation.set(0, 0, 0);
-                    foundWheel.scale.set(scale, scale, scale);
-                    wheels[index] = foundWheel;
-                });
-
-                resolve({ chassisMesh: fbx, wheelMeshes: wheels });
+                loadWheelMeshes(scale)
+                    .then((wheelMeshes) => {
+                        resolve({ chassisMesh: scene, wheelMeshes });
+                    })
+                    .catch(reject);
             },
             undefined,
             (error) => reject(error)

@@ -28,6 +28,9 @@ export class Car {
         this.maxSteer = 0.7; // ~30°
         this.suspensionRestLength = 0.35;
         this.wheelRadius = 0.5;
+        this.frontWheelForwardOffset = this.wheelRadius * 0.75; // quarter wheel diameter
+        this.chassisVisualDrop = this.wheelRadius * 0.7;
+        this.leftWheelInwardOffset = this.wheelRadius * 0.3; // nudge left tires toward centerline
 
         // -------- Engine & Transmission ----------
         this.rpm = 1000;
@@ -52,6 +55,8 @@ export class Car {
         this.engineBaseForce = 600;
         this.dragCoeff = 0.02;
         this.downforceCoeff = 0.1;
+        this.sleepSpeedThreshold = 0.12;
+        this.sleepInputThreshold = 0.05;
 
         // -------- chassis body ----------
         const halfExtents = { x: 1.0, y: 0.35, z: 2.0 }; // Rapier cuboid half-sizes
@@ -60,8 +65,7 @@ export class Car {
         const rbDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(0, 5, 0)
             .setLinearDamping(0.1)
-            .setAngularDamping(0.5)
-            .setCanSleep(false);
+            .setAngularDamping(0.5);
 
         this.chassisBody = this.world.createRigidBody(rbDesc);
 
@@ -145,24 +149,36 @@ export class Car {
         }
 
         // -------- wheel meshes (children of group) ----------
-        this.wheelMeshes = [];
+        this.wheelSlots = [];
+        this.wheelSteerPivots = [];
+        this.wheelRollPivots = [];
         for (let i = 0; i < numWheels; i++) {
             const slot = new THREE.Group();
+            const steerPivot = new THREE.Group();
+            const rollPivot = new THREE.Group();
+
+            steerPivot.add(rollPivot);
+            slot.add(steerPivot);
             this.group.add(slot);
-            this.wheelMeshes.push(slot);
+
+            this.wheelSlots.push(slot);
+            this.wheelSteerPivots.push(steerPivot);
+            this.wheelRollPivots.push(rollPivot);
         }
 
         loadCarModel({ detailed, wheelRadius: this.wheelRadius })
             .then(({ chassisMesh, wheelMeshes }) => {
                 if (chassisMesh) {
                     this.chassisMesh = chassisMesh;
+                    this.chassisMesh.position.y -= this.chassisVisualDrop;
                     this.group.add(chassisMesh);
                 }
 
                 if (Array.isArray(wheelMeshes)) {
                     wheelMeshes.forEach((mesh, idx) => {
-                        if (!mesh || !this.wheelMeshes[idx]) return;
-                        this.wheelMeshes[idx].add(mesh);
+                        const pivot = this.wheelRollPivots[idx];
+                        if (!mesh || !pivot) return;
+                        pivot.add(mesh);
                     });
                 }
             })
@@ -253,6 +269,16 @@ export class Car {
 
         const isShifting = time - this.lastShiftTime < this.shiftDuration;
 
+        const wantsAutoSleep =
+            speedMs < this.sleepSpeedThreshold &&
+            Math.abs(this.engineInput) < this.sleepInputThreshold &&
+            Math.abs(this.steerInput) < this.sleepInputThreshold &&
+            Math.abs(this.brakeInput) < this.sleepInputThreshold;
+
+        if (!wantsAutoSleep) {
+            this.chassisBody.wakeUp();
+        }
+
         // 3. Calculate RPM
         const wheelRotSpeed = speedMs / this.wheelRadius; // rad/s
         const wheelRpm = wheelRotSpeed * 9.5493; // rad/s to rpm
@@ -321,6 +347,13 @@ export class Car {
         // apply forces to chassis
         this.vehicle.updateVehicle(dt);
 
+        if (wantsAutoSleep) {
+            const zero = new RAPIER.Vector3(0, 0, 0);
+            this.chassisBody.setLinvel(zero, true);
+            this.chassisBody.setAngvel(zero, true);
+            this.chassisBody.sleep();
+        }
+
         // -------- sync transforms --------
         const p = this.chassisBody.translation();
         const r = this.chassisBody.rotation();
@@ -369,12 +402,22 @@ export class Car {
                 .sub(chassisPos)
                 .applyQuaternion(invChassisQuat);
 
-            const mesh = this.wheelMeshes[i];
-            mesh.position.copy(localPos);
+            const slot = this.wheelSlots[i];
+            const steerPivot = this.wheelSteerPivots[i];
+            const rollPivot = this.wheelRollPivots[i];
 
-            // Rotation: Steering (Y) * Rolling (X)
+            if (i < 2) {
+                localPos.z += this.frontWheelForwardOffset;
+            }
+
+            if (i === 0 || i === 2) {
+                localPos.x -= this.leftWheelInwardOffset;
+            }
+
+            slot.position.copy(localPos);
+
             const steering = this.vehicle.wheelSteering(i);
-            const rotation = this.vehicle.wheelRotation(i);
+            const rotation = -this.vehicle.wheelRotation(i);
 
             const qSteer = new THREE.Quaternion().setFromAxisAngle(
                 new THREE.Vector3(0, 1, 0),
@@ -385,7 +428,8 @@ export class Car {
                 rotation
             );
 
-            mesh.quaternion.copy(qSteer).multiply(qRoll);
+            steerPivot.quaternion.copy(qSteer);
+            rollPivot.quaternion.copy(qRoll);
         }
 
         if (this.debugPanel) {
