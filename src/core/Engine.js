@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { World } from "../game/World.js";
 import { OrbitControls } from "three/examples/jsm/Addons.js";
-import MotionBlurPipeline from "../game/environment/MotionBlur.js";
+// import MotionBlur from "../game/environment/MotionBlur.js";
 import { InputManager } from "../input/InputManager.js";
 
 export class Engine {
@@ -48,20 +48,16 @@ export class Engine {
         window.addEventListener("resize", () => this.onResize());
     }
 
-    async init() {
+    async init(useDetailedModel = false) {
         this.world = new World(this.scene, this.camera, this.renderer);
-        await this.world.init(); // waits for racetrack, then car
+        await this.world.init(useDetailedModel); // waits for racetrack, then car
 
-        this.motionBlur = new MotionBlurPipeline(
-            this.renderer,
-            this.scene,
-            this.camera,
-            { damp: 0.88 }
-        );
-        this.motionBlur.setSize(
-            this.container.clientWidth,
-            this.container.clientHeight
-        );
+        // this.motionBlur = new MotionBlur(
+        //     this.renderer,
+        //     this.scene,
+        //     this.camera,
+        //     { damp: 0.88 }
+        // );
     }
 
     onResize() {
@@ -70,9 +66,6 @@ export class Engine {
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(w, h);
-        if (this.motionBlur) {
-            this.motionBlur.setSize(w, h);
-        }
     }
 
     start() {

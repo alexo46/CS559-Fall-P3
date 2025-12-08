@@ -10,10 +10,13 @@ export class Car {
      * @param {THREE.Scene} scene
      * @param {boolean} detailed
      */
-    constructor(physics, scene, detailed = false) {
+    constructor(physics, scene, detailed = false, options = {}) {
+        const { enableKeyboard = true } = options;
+
         this.physics = physics;
         this.world = physics.world;
         this.scene = scene;
+        this.enableKeyboard = enableKeyboard;
 
         // ---- public group ----
         this.group = new THREE.Group();
@@ -30,7 +33,7 @@ export class Car {
         this.wheelRadius = 0.5;
         this.frontWheelForwardOffset = this.wheelRadius * 0.75; // quarter wheel diameter
         this.chassisVisualDrop = this.wheelRadius * 0.7;
-        this.leftWheelInwardOffset = this.wheelRadius * 0.3; // nudge left tires toward centerline
+        this.leftWheelInwardOffset = this.wheelRadius * 0.75; // nudge left tires toward centerline
 
         // -------- Engine & Transmission ----------
         this.rpm = 1000;
@@ -52,14 +55,14 @@ export class Car {
         this.shiftDownRpm = 3000;
         this.lastShiftTime = 0;
         this.shiftDuration = 0.2;
-        this.engineBaseForce = 600;
+        this.engineBaseForce = 2400;
         this.dragCoeff = 0.02;
         this.downforceCoeff = 0.1;
         this.sleepSpeedThreshold = 0.12;
         this.sleepInputThreshold = 0.05;
 
         // -------- chassis body ----------
-        const halfExtents = { x: 1.0, y: 0.35, z: 2.0 }; // Rapier cuboid half-sizes
+        const halfExtents = { x: 1.5, y: 0.35, z: 3.5 }; // Rapier cuboid half-sizes
         this.chassisHalfExtents = halfExtents;
 
         const rbDesc = RAPIER.RigidBodyDesc.dynamic()
@@ -77,9 +80,28 @@ export class Car {
         )
             .setTranslation(0, -0.25, 0)
             .setFriction(1.0)
-            .setMass(200);
+            .setMass(800);
 
         this.world.createCollider(colDesc, this.chassisBody);
+
+        // --- SUPER OBVIOUS DEBUG MESH FOR CHASSIS ---
+        const debugGeo = new THREE.BoxGeometry(
+            halfExtents.x * 2,
+            halfExtents.y * 2,
+            halfExtents.z * 2
+        );
+        const debugMat = new THREE.MeshBasicMaterial({
+            color: 0xff00ff,
+            wireframe: true,
+            depthTest: false,
+            transparent: true,
+            opacity: 1.0,
+        });
+        this.collisionDebugMesh = new THREE.Mesh(debugGeo, debugMat);
+        this.collisionDebugMesh.position.set(0, 0, 0);
+        this.group.add(this.collisionDebugMesh);
+        this.collisionDebugMesh.visible = true;
+        console.log("Created collisionDebugMesh", this.collisionDebugMesh);
 
         // -------- chassis mesh ----------
         this.chassisMesh = null;
@@ -95,15 +117,31 @@ export class Car {
         const axleCs = new RAPIER.Vector3(-1, 0, 0); // wheel rotates around -X
 
         const yConn = -0.1;
-        const xOff = halfExtents.x + 0.25;
-        const zOff = halfExtents.z - 0.2;
+
+        // Explicit wheel layout relative to chassis center
+        const wheelBase = 3.0; // distance between front and rear axles (Z)
+        const trackWidth = 1.8; // distance between left and right wheels (X)
+        const halfWheelBase = wheelBase * 0.5;
+        const halfTrack = trackWidth * 0.5;
 
         // 0 = FL, 1 = FR, 2 = RL, 3 = RR (in chassis local space)
         const wheels = [
-            { pos: new RAPIER.Vector3(+xOff, yConn, +zOff), steering: true }, // FL
-            { pos: new RAPIER.Vector3(-xOff, yConn, +zOff), steering: true }, // FR
-            { pos: new RAPIER.Vector3(+xOff, yConn, -zOff), steering: false }, // RL
-            { pos: new RAPIER.Vector3(-xOff, yConn, -zOff), steering: false }, // RR
+            {
+                pos: new RAPIER.Vector3(+halfTrack, yConn, +halfWheelBase),
+                steering: true,
+            }, // FL
+            {
+                pos: new RAPIER.Vector3(-halfTrack, yConn, +halfWheelBase),
+                steering: true,
+            }, // FR
+            {
+                pos: new RAPIER.Vector3(+halfTrack, yConn, -halfWheelBase),
+                steering: false,
+            }, // RL
+            {
+                pos: new RAPIER.Vector3(-halfTrack, yConn, -halfWheelBase),
+                steering: false,
+            }, // RR
         ];
         this.wheels = wheels;
 
@@ -191,17 +229,42 @@ export class Car {
         this.engineInput = 0;
         this.steerInput = 0;
         this.brakeInput = 0;
+        this.controlProvider = null;
 
-        window.addEventListener("keydown", (e) => {
-            this.keys[e.code] = true;
+        if (this.enableKeyboard) {
+            this.keyDownHandler = (e) => {
+                this.keys[e.code] = true;
 
-            if (e.code === "F3") {
-                this.debugPanel.visible = !this.debugPanel.visible;
-            }
-        });
-        window.addEventListener("keyup", (e) => {
-            this.keys[e.code] = false;
-        });
+                if (e.code === "F3") {
+                    this.debugPanel.visible = !this.debugPanel.visible;
+                }
+
+                // Temporarily always show debug mesh while debugging visibility
+                // if (e.code === "F4" && this.collisionDebugMesh) {
+                //     this.collisionDebugMesh.visible =
+                //         !this.collisionDebugMesh.visible;
+                // }
+            };
+
+            this.keyUpHandler = (e) => {
+                this.keys[e.code] = false;
+            };
+
+            window.addEventListener("keydown", this.keyDownHandler);
+            window.addEventListener("keyup", this.keyUpHandler);
+        }
+    }
+
+    setControlProvider(provider) {
+        this.controlProvider = provider;
+    }
+
+    getControlInputs(dt) {
+        if (!this.controlProvider) return null;
+        if (typeof this.controlProvider === "function") {
+            return this.controlProvider(dt) || null;
+        }
+        return this.controlProvider;
     }
 
     getCarMph() {
@@ -239,7 +302,19 @@ export class Car {
     }
 
     update(dt) {
-        this.handleInput();
+        const externalControls = this.getControlInputs(dt);
+        if (externalControls) {
+            const { engine = 0, steer = 0, brake = 0 } = externalControls;
+            this.engineInput = THREE.MathUtils.clamp(engine, -1, 1);
+            this.steerInput = THREE.MathUtils.clamp(steer, -1, 1);
+            this.brakeInput = THREE.MathUtils.clamp(brake, 0, 1);
+        } else if (this.enableKeyboard) {
+            this.handleInput();
+        } else {
+            this.engineInput = 0;
+            this.steerInput = 0;
+            this.brakeInput = 0;
+        }
         const time = performance.now() / 1000;
 
         // 1. Determine Speed & Direction

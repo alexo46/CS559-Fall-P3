@@ -1,36 +1,35 @@
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { AfterimagePass } from "three/examples/jsm/postprocessing/AfterimagePass.js";
-
-class MotionBlurPipeline {
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { MotionBlurPass } from "../../postprocessing/MotionBlurPass.js"; // your local file
+/**
+ * Simple wrapper around `EffectComposer` and `MotionBlurPass`.
+ *
+ * Expects THREE, EffectComposer, RenderPass and MotionBlurPass to be available
+ * in the current module scope.
+ */
+export default class MotionBlur {
+    /**
+     * @param {THREE.WebGLRenderer} renderer - The renderer used to draw the scene.
+     * @param {THREE.Scene} scene - Scene to render.
+     * @param {THREE.Camera} camera - Camera used for rendering and motion vectors.
+     * @param {{ damp?: number }} [options] - Optional configuration.
+     * @param {number} [options.damp=0.995] - Motion blur damping (higher = longer trails).
+     */
     constructor(renderer, scene, camera, { damp = 0.995 } = {}) {
-        this.renderer = renderer;
-        this.scene = scene;
-        this.camera = camera;
+        this.renderScene = new RenderPass(scene, camera);
+        this.motionPass = new MotionBlurPass(scene, camera, { damp });
 
-        this.composer = new EffectComposer(this.renderer);
-        this.renderPass = new RenderPass(this.scene, this.camera);
-        this.afterimagePass = new AfterimagePass(damp);
-
-        this.composer.addPass(this.renderPass);
-        this.composer.addPass(this.afterimagePass);
+        this.composer = new EffectComposer(renderer);
+        this.composer.setSize(window.innerWidth, window.innerHeight);
+        this.composer.addPass(this.renderScene);
+        this.composer.addPass(this.motionPass);
+        this.motionPass.renderToScreen = true;
     }
 
-    setSize(width, height) {
-        this.composer.setSize(width, height);
-    }
-
-    render(delta) {
-        this.composer.render(delta);
-    }
-
-    setDamp(value) {
-        this.afterimagePass.uniforms["damp"].value = value;
+    /**
+     * Render one frame of the motion-blur pipeline.
+     */
+    render() {
+        this.composer.render();
     }
 }
-
-export function createMotionBlur(renderer, scene, camera, options) {
-    return new MotionBlurPipeline(renderer, scene, camera, options);
-}
-
-export default MotionBlurPipeline;

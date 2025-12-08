@@ -1,11 +1,13 @@
 import * as THREE from "three";
 
 import { Car } from "./Car.js";
+import { AIDriver } from "./AIDriver.js";
 import { SkyEnvironment } from "./environment/Sky.js";
 import { WorldPhysics } from "../physics/WorldPhysics.js";
 import { RapierDebugRenderer } from "../physics/RapierDebugRenderer.js";
 import { createRaceTrack } from "../assets/models/racetrack/RaceTrack.js";
 import { Speedometer } from "../ui/Speedometer.js";
+import { RacingHUD } from "../ui/RacingHUD.js";
 
 export class World {
     constructor(scene, camera, renderer) {
@@ -29,13 +31,24 @@ export class World {
             this.sunLight,
             {}
         );
+
+        // Race state
+        this.raceStartTime = 0;
+        this.currentLapStartTime = 0;
+        this.lapTimes = [];
+        this.bestLapTime = null;
+        this.currentLap = 1;
+        this.totalLaps = 3;
+        this.finishLineZ = 0;
+        this.lastPlayerZ = 0;
+        this.lastAiZ = 0;
     }
 
-    async init() {
+    async init(useDetailedModel = false) {
         this.setupLights();
         // this.setupGround();
         await this.setupRaceTrack();
-        this.setupCar();
+        this.setupCars(useDetailedModel);
     }
 
     setupLights() {
@@ -141,13 +154,73 @@ export class World {
         this.raceTrack = raceTrack;
     }
 
-    setupCar() {
-        this.car = new Car(this.physics, this.scene, true);
+    setupCars(useDetailedModel = false) {
+        this.playerCar = new Car(this.physics, this.scene, useDetailedModel, {
+            enableKeyboard: true,
+        });
+        this.playerCar.chassisBody.setTranslation({ x: -3, y: 5, z: 0 }, true);
+
         this.camera.position.set(0, 6, 14);
-        this.camera.lookAt(this.car.group.position);
+        this.camera.lookAt(this.playerCar.group.position);
+
+        const waypointLoop = this.buildDefaultWaypoints();
+        this.aiDriver = waypointLoop.length
+            ? new AIDriver({
+                  waypoints: waypointLoop,
+                  waypointAdvanceDistance: 8,
+                  targetSpeedMph: 55,
+              })
+            : null;
+
+        this.aiCar = new Car(this.physics, this.scene, false, {
+            enableKeyboard: false,
+        });
+        this.aiCar.chassisBody.setTranslation({ x: -8, y: 5, z: -5 }, true);
+        this.aiCar.setControlProvider((dt) =>
+            this.aiDriver ? this.aiDriver.update(this.aiCar, dt) : null
+        );
+
+        this.vehicles = [this.playerCar, this.aiCar];
+        this.car = this.playerCar; // preserve existing references
 
         this.speedometer = new Speedometer();
         this.speedometer.visible = true;
+
+        this.racingHUD = new RacingHUD();
+        this.racingHUD.visible = true;
+        this.racingHUD.updateLap(1, this.totalLaps);
+        this.racingHUD.updatePosition(1, 2);
+
+        this.raceStartTime = performance.now() / 1000;
+        this.currentLapStartTime = this.raceStartTime;
+    }
+
+    buildDefaultWaypoints() {
+        const points = [];
+        const radiusX = 70;
+        const radiusZ = 120;
+        const segments = 24;
+        const y = 0.5;
+
+        for (let i = 0; i < segments; i++) {
+            const angle = (i / segments) * Math.PI * 2;
+            points.push(
+                new THREE.Vector3(
+                    Math.cos(angle) * radiusX,
+                    y,
+                    Math.sin(angle) * radiusZ
+                )
+            );
+        }
+
+        return points;
+    }
+
+    checkLapCrossing(car, lastZ) {
+        const currentZ = car.group.position.z;
+        const crossedLine =
+            lastZ < this.finishLineZ && currentZ >= this.finishLineZ;
+        return crossedLine;
     }
 
     update(dt, controls) {
@@ -158,7 +231,49 @@ export class World {
         this.speedometer.draw();
 
         this.physics.step(dt);
-        this.car.update(dt);
+        this.playerCar?.update(dt);
+        this.aiCar?.update(dt);
+
+        // Update race telemetry
+        const currentTime = performance.now() / 1000;
+        const raceTime = currentTime - this.raceStartTime;
+        const currentLapTime = currentTime - this.currentLapStartTime;
+
+        this.racingHUD.updateRaceTime(raceTime);
+        this.racingHUD.updateCurrentLapTime(currentLapTime);
+
+        // Check for lap completion (player)
+        if (this.checkLapCrossing(this.playerCar, this.lastPlayerZ)) {
+            // Don't count the first crossing as a completed lap
+            if (this.currentLap > 1 || currentLapTime > 5) {
+                const lapTime = currentLapTime;
+                this.lapTimes.push(lapTime);
+                this.racingHUD.updateLastLapTime(lapTime);
+
+                if (this.bestLapTime === null || lapTime < this.bestLapTime) {
+                    this.bestLapTime = lapTime;
+                    this.racingHUD.updateBestLapTime(lapTime);
+                }
+
+                this.currentLap++;
+                this.racingHUD.updateLap(this.currentLap, this.totalLaps);
+                this.currentLapStartTime = currentTime;
+
+                if (this.currentLap > this.totalLaps) {
+                    console.log("Race finished!");
+                }
+            }
+        }
+
+        // Simple position calculation
+        const playerZ = this.playerCar.group.position.z;
+        const aiZ = this.aiCar.group.position.z;
+        const position = playerZ > aiZ ? 1 : 2;
+        this.racingHUD.updatePosition(position, 2);
+
+        this.lastPlayerZ = this.playerCar.group.position.z;
+        this.lastAiZ = this.aiCar.group.position.z;
+
         // this.rapierDebugger.update();
     }
 }

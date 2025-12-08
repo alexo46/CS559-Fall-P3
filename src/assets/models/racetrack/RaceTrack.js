@@ -26,7 +26,7 @@ export function createRaceTrack(options = {}) {
     const defaultObjects = [
         { name: "road_inside", file: "road_inside.glb" },
         { name: "road_outside", file: "road_outside.glb" },
-        { name: "road_barriers", file: "road_barriers.glb" },
+        { name: "road_barriers", file: "road_barrier.glb" },
         { name: "road_tunnel", file: "road_tunnel.glb" },
     ];
 
