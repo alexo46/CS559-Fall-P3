@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js Darker Crowd</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    class Grandstand {
+        constructor(scene, config) {
+            this.scene = scene;
+            this.width = config.width || 10;
+            this.rows = config.rows || 5;
+            this.hasRoof = config.hasRoof || false;
+            this.position = config.position || { x: 0, y: 0, z: 0 };
+            this.rotationY = config.rotationY || 0;
+            this.crowdDensity = config.crowdDensity || 0.6;
+
+            this.stepHeight = 0.6;
+            this.stepDepth = 1.2;
+            
+            this.meshGroup = new THREE.Group();
+            
+            this.materials = {
+                // Made concrete slightly darker too, to match the vibe
+                concrete: new THREE.MeshStandardMaterial({ color: 0x777777, roughness: 0.9 }), 
+                roof: new THREE.MeshStandardMaterial({ color: 0xDDDDDD, side: THREE.DoubleSide }),
+                pillar: new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.6 }),
+            };
+
+            this.crowdTexture = this._generateCrowdTexture();
+
+            this._buildStructure();
+            if (this.hasRoof) this._buildRoof();
+            this._populateCrowd();
+
+            this.meshGroup.position.set(this.position.x, this.position.y, this.position.z);
+            this.meshGroup.rotation.y = this.rotationY;
+            this.scene.add(this.meshGroup);
+        }
+
+        _generateCrowdTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            
+            // Draw Head (White base)
+            ctx.fillStyle = '#ffffff'; 
+            ctx.beginPath();
+            ctx.arc(32, 20, 18, 0, Math.PI * 2); 
+            ctx.fill();
+            
+            // Draw Body (White base)
+            ctx.fillStyle = '#ffffff'; 
+            ctx.fillRect(4, 40, 56, 88);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            return texture;
+        }
+
+        _buildStructure() {
+            for (let i = 0; i < this.rows; i++) {
+                const geo = new THREE.BoxGeometry(this.width, this.stepHeight, this.stepDepth);
+                const step = new THREE.Mesh(geo, this.materials.concrete);
+                step.position.y = (i * this.stepHeight) + (this.stepHeight / 2);
+                step.position.z = -i * this.stepDepth;
+                step.receiveShadow = true;
+                step.castShadow = true;
+                this.meshGroup.add(step);
+            }
+
+            const totalHeight = this.rows * this.stepHeight;
+            const wallGeo = new THREE.BoxGeometry(this.width, totalHeight, 0.5);
+            const wall = new THREE.Mesh(wallGeo, this.materials.concrete);
+            wall.position.z = -(this.rows * this.stepDepth) + (this.stepDepth/2);
+            wall.position.y = totalHeight / 2;
+            this.meshGroup.add(wall);
+        }
+
+        _buildRoof() {
+            const totalDepth = this.rows * this.stepDepth;
+            const totalHeight = this.rows * this.stepHeight;
+
+            const roofGeo = new THREE.BoxGeometry(this.width, 0.2, totalDepth + 2);
+            const roof = new THREE.Mesh(roofGeo, this.materials.roof);
+            roof.position.y = totalHeight + 3.5; 
+            roof.position.z = -((totalDepth / 2) - 1);
+            roof.rotation.x = 0.1; 
+            roof.castShadow = true;
+            this.meshGroup.add(roof);
+
+            const pillarGeo = new THREE.CylinderGeometry(0.3, 0.3, totalHeight + 4);
+            const leftPillar = new THREE.Mesh(pillarGeo, this.materials.pillar);
+            const rightPillar = new THREE.Mesh(pillarGeo, this.materials.pillar);
+            const zPos = -(totalDepth) + 1;
+            const yPos = (totalHeight + 4) / 2;
+
+            leftPillar.position.set(-this.width/2 + 1, yPos, zPos);
+            rightPillar.position.set(this.width/2 - 1, yPos, zPos);
+            this.meshGroup.add(leftPillar);
+            this.meshGroup.add(rightPillar);
+        }
+
+        _populateCrowd() {
+            const seatsPerRow = Math.floor(this.width / 1.0); 
+
+            for(let r = 0; r < this.rows; r++) {
+                for(let s = 0; s < seatsPerRow; s++) {
+                    if(Math.random() > this.crowdDensity) continue;
+
+                    // --- COLOR CHANGE HERE ---
+                    // Math.random() : Random Hue (0 to 1) - any color
+                    // 0.3           : Saturation (Low = Greyish)
+                    // 0.2           : Lightness  (Low = Dark/Black)
+                    const color = new THREE.Color().setHSL(Math.random(), 0.3, 0.2);
+                    
+                    const material = new THREE.SpriteMaterial({ 
+                        map: this.crowdTexture, 
+                        color: color 
+                    });
+
+                    // Optional: Lower opacity slightly so they blend better
+                    // material.opacity = 0.9; 
+
+                    const sprite = new THREE.Sprite(material);
+
+                    const x = (s * 1.0) - (this.width / 2) + 0.5;
+                    const y = (r * this.stepHeight) + this.stepHeight + 0.5; 
+                    const z = (-r * this.stepDepth);
+
+                    sprite.position.set(
+                        x + (Math.random() * 0.2), 
+                        y, 
+                        z + (Math.random() * 0.2)
+                    );
+                    
+                    sprite.scale.set(0.8, 1.6, 1); 
+                    this.meshGroup.add(sprite);
+                }
+            }
+        }
+    }
+
+    // --- SCENE SETUP ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xaaccff);
+    scene.fog = new THREE.Fog(0xaaccff, 20, 80); // Added closer fog to blend crowd
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(20, 15, 20);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    scene.add(dirLight);
+
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(100, 100), 
+        new THREE.MeshStandardMaterial({ color: 0x445544 }) // Darker grass
+    );
+    plane.rotation.x = -Math.PI / 2;
+    plane.receiveShadow = true;
+    scene.add(plane);
+
+    // Create Grandstand
+    const mainStand = new Grandstand(scene, {
+        width: 30,
+        rows: 10,
+        hasRoof: true,
+        position: { x: 0, y: 0, z: -10 },
+        crowdDensity: 0.8
+    });
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 5, 0);
+    controls.update();
+
+    function animate() {
+        requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { MotionBlurPass } from "../../postprocessing/MotionBlurPass.js"; // your local file
+// import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+// import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+// import { MotionBlurPass } from "../../postprocessing/motion-blur/MotionBlurPass.js";
 /**
  * Simple wrapper around `EffectComposer` and `MotionBlurPass`.
  *
@@ -16,20 +16,19 @@ export default class MotionBlur {
      * @param {number} [options.damp=0.995] - Motion blur damping (higher = longer trails).
      */
     constructor(renderer, scene, camera, { damp = 0.995 } = {}) {
-        this.renderScene = new RenderPass(scene, camera);
-        this.motionPass = new MotionBlurPass(scene, camera, { damp });
-
-        this.composer = new EffectComposer(renderer);
-        this.composer.setSize(window.innerWidth, window.innerHeight);
-        this.composer.addPass(this.renderScene);
-        this.composer.addPass(this.motionPass);
-        this.motionPass.renderToScreen = true;
+        // this.renderScene = new RenderPass(scene, camera);
+        // this.motionPass = new MotionBlurPass(scene, camera, { damp });
+        // this.composer = new EffectComposer(renderer);
+        // this.composer.setSize(window.innerWidth, window.innerHeight);
+        // this.composer.addPass(this.renderScene);
+        // this.composer.addPass(this.motionPass);
+        // this.motionPass.renderToScreen = true;
     }
 
     /**
      * Render one frame of the motion-blur pipeline.
      */
     render() {
-        this.composer.render();
+        // this.composer.render();
     }
 }

@@ -32,6 +32,10 @@ export class World {
             {}
         );
 
+        this.minFov = this.camera.fov || 70;
+        this.maxFov = this.minFov + 15;
+        this.fovSpeedRange = { min: 0, max: 140 };
+
         // Race state
         this.raceStartTime = 0;
         this.currentLapStartTime = 0;
@@ -42,21 +46,29 @@ export class World {
         this.finishLineZ = 0;
         this.lastPlayerZ = 0;
         this.lastAiZ = 0;
+
+        this.trackLights = [];
     }
 
     async init(useDetailedModel = false) {
         this.setupLights();
-        // this.setupGround();
+        this.setupGround();
         await this.setupRaceTrack();
         this.setupCars(useDetailedModel);
     }
 
     setupLights() {
-        const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+        const ambient = new THREE.AmbientLight(0xffffff, 0.35);
         this.scene.add(ambient);
+
+        const hemi = new THREE.HemisphereLight(0xb1e1ff, 0x1d1d1d, 0.5);
+        hemi.position.set(0, 40, 0);
+        this.scene.add(hemi);
 
         this.sunLight = new THREE.DirectionalLight(0xffffff, 5.0);
         this.sunLight.castShadow = true;
+
+        this.sunLight.position.set(80, 100, 40);
 
         this.sunLight.shadow.mapSize.width = 2048;
         this.sunLight.shadow.mapSize.height = 2048;
@@ -69,6 +81,47 @@ export class World {
 
         this.scene.add(this.sunLight);
         this.scene.add(this.sunLight.target);
+
+        const fillLight = new THREE.DirectionalLight(0xffe8d0, 1.2);
+        fillLight.position.set(-60, 60, -50);
+        this.scene.add(fillLight);
+
+        this.setupTrackLights();
+    }
+
+    setupTrackLights() {
+        const lampColor = 0xfff2c5;
+        const positions = [
+            new THREE.Vector3(40, 15, 20),
+            new THREE.Vector3(-45, 15, -10),
+            new THREE.Vector3(0, 15, -50),
+            new THREE.Vector3(60, 15, -90),
+            new THREE.Vector3(-70, 15, 50),
+        ];
+
+        positions.forEach((pos, idx) => {
+            const spot = new THREE.SpotLight(
+                lampColor,
+                2.2,
+                140,
+                Math.PI / 4,
+                0.35
+            );
+            spot.position.copy(pos);
+            spot.castShadow = true;
+            spot.shadow.mapSize.width = 1024;
+            spot.shadow.mapSize.height = 1024;
+            spot.shadow.camera.near = 5;
+            spot.shadow.camera.far = 200;
+
+            const target = new THREE.Object3D();
+            target.position.set(pos.x, 0, pos.z);
+            this.scene.add(target);
+
+            spot.target = target;
+            this.scene.add(spot);
+            this.trackLights.push({ light: spot, target });
+        });
     }
 
     setupGround() {
@@ -113,10 +166,10 @@ export class World {
             aoMap: aoMap,
         });
 
-        const geo = new THREE.PlaneGeometry(500, 500);
+        const geo = new THREE.PlaneGeometry(1000, 1000);
         const ground = new THREE.Mesh(geo, mat);
         ground.rotation.x = -Math.PI / 2;
-        ground.position.y = 0;
+        ground.position.y = -0.05;
         ground.receiveShadow = true;
         this.scene.add(ground);
     }
@@ -175,7 +228,7 @@ export class World {
         this.aiCar = new Car(this.physics, this.scene, false, {
             enableKeyboard: false,
         });
-        this.aiCar.chassisBody.setTranslation({ x: -8, y: 5, z: -5 }, true);
+        this.aiCar.chassisBody.setTranslation({ x: 8, y: 5, z: -5 }, true);
         this.aiCar.setControlProvider((dt) =>
             this.aiDriver ? this.aiDriver.update(this.aiCar, dt) : null
         );
@@ -230,6 +283,8 @@ export class World {
         this.speedometer.updateRPM(rpm);
         this.speedometer.draw();
 
+        this.updateCameraFov(speed);
+
         this.physics.step(dt);
         this.playerCar?.update(dt);
         this.aiCar?.update(dt);
@@ -275,5 +330,28 @@ export class World {
         this.lastAiZ = this.aiCar.group.position.z;
 
         // this.rapierDebugger.update();
+    }
+
+    updateCameraFov(speedMph) {
+        const { min, max } = this.fovSpeedRange;
+        const normalized = THREE.MathUtils.clamp(
+            (speedMph - min) / (max - min || 1),
+            0,
+            1
+        );
+        const targetFov = THREE.MathUtils.lerp(
+            this.minFov,
+            this.maxFov,
+            normalized
+        );
+
+        if (Math.abs(this.camera.fov - targetFov) > 0.05) {
+            this.camera.fov = THREE.MathUtils.lerp(
+                this.camera.fov,
+                targetFov,
+                0.1
+            );
+            this.camera.updateProjectionMatrix();
+        }
     }
 }

@@ -1,6 +1,14 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RAPIER } from "../../../physics/WorldPhysics.js";
+import { Grandstand } from "./Grandstand.js";
+
+const ASSET_BASE_PATH = "/src/assets/models/racetrack/";
+
+const resolveAssetPath = (fileName, basePath = ASSET_BASE_PATH) => {
+    const normalized = basePath.endsWith("/") ? basePath : `${basePath}/`;
+    return `${normalized}${fileName}`;
+};
 
 /**
  * @param {Object} options
@@ -12,7 +20,7 @@ import { RAPIER } from "../../../physics/WorldPhysics.js";
  */
 export function createRaceTrack(options = {}) {
     const {
-        assetBaseUrl = "/src/assets/models/racetrack/",
+        assetBaseUrl = ASSET_BASE_PATH,
         loadingManager,
         extraObjects = [],
         world = null,
@@ -24,10 +32,9 @@ export function createRaceTrack(options = {}) {
     const loader = new GLTFLoader(loadingManager);
 
     const defaultObjects = [
-        { name: "road_inside", file: "road_inside.glb" },
-        { name: "road_outside", file: "road_outside.glb" },
-        { name: "road_barriers", file: "road_barrier.glb" },
-        { name: "road_tunnel", file: "road_tunnel.glb" },
+        { name: "race_track", file: "demo_track/demo-racetrack.glb" },
+        { name: "grandstand_spawns", file: "demo_track/grandstand-spawns.glb" },
+        { name: "barriers", file: "demo_track/barrier.glb" },
     ];
 
     const objectsToLoad = [...defaultObjects, ...extraObjects];
@@ -36,7 +43,7 @@ export function createRaceTrack(options = {}) {
     trackGroup.userData.objectsByName = {};
 
     const loadPromises = objectsToLoad.map((def) => {
-        const url = assetBaseUrl + def.file;
+        const url = resolveAssetPath(def.file, assetBaseUrl);
 
         return new Promise((resolve, reject) => {
             loader.load(
@@ -50,6 +57,10 @@ export function createRaceTrack(options = {}) {
 
                     obj.name = def.name;
                     trackGroup.add(obj);
+
+                    if (def.name === "grandstand_spawns") {
+                        addGrandstandsFromSpawns(obj, trackGroup);
+                    }
 
                     // --- Default: create static trimesh colliders for all meshes in road_* models ---
                     if (world) {
@@ -86,6 +97,65 @@ export function createRaceTrack(options = {}) {
     });
 
     return trackGroup;
+}
+
+function addGrandstandsFromSpawns(spawnRoot, trackGroup) {
+    if (!spawnRoot) return;
+
+    console.log("--- Processing Grandstand Spawns ---");
+    // We don't need Euler anymore, we use Quaternions for full 3D rotation
+    const tmpQuat = new THREE.Quaternion();
+
+    spawnRoot.updateWorldMatrix(true, true);
+
+    spawnRoot.traverse((child) => {
+        if (child.name.includes("Spawn")) {
+            // 1. Get Position and Full Rotation
+            const worldPos = child.getWorldPosition(new THREE.Vector3());
+            const worldQuat = child.getWorldQuaternion(tmpQuat);
+
+            // 2. Read config (if any) or Default to Larger Size
+            const config = child.userData?.grandstand ?? {};
+
+            // Custom length multipliers based on spawn index
+            let widthMult = 1;
+            let idx = -1;
+
+            // Handle "Spawn000", "Spawn001" etc.
+            const match = child.name.match(/Spawn(\d+)/);
+            if (match) {
+                idx = parseInt(match[1], 10);
+            } else if (child.name === "Spawn") {
+                idx = 0;
+            }
+
+            if (idx === 0) widthMult = 7;
+            else if ([2, 3, 5, 6, 7].includes(idx)) widthMult = 2;
+            else if (idx === 4) widthMult = 3;
+
+            // Rotate 90 degrees around Y to face the track
+            const rotAdjustment = new THREE.Quaternion().setFromAxisAngle(
+                new THREE.Vector3(0, 1, 0),
+                Math.PI / 2
+            );
+            worldQuat.multiply(rotAdjustment);
+
+            new Grandstand(trackGroup, {
+                width: (config.width ?? 25) * widthMult,
+                rows: config.rows ?? 10,
+
+                hasRoof:
+                    typeof config.hasRoof === "boolean" ? config.hasRoof : true,
+                crowdDensity: config.crowdDensity ?? 0.5,
+
+                position: worldPos, // Pass vector directly
+                quaternion: worldQuat, // Pass full quaternion!
+            });
+        }
+    });
+
+    // Hide the ugly arrows now that we are done
+    spawnRoot.visible = false;
 }
 
 /**

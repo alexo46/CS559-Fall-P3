@@ -112,7 +112,7 @@ export class Speedometer {
 
             // Draw RPM numbers
             ctx.fillStyle = rpm >= 7 ? "#ff0000" : "#ffffff";
-            ctx.font = "bold 18px Arial";
+            ctx.font = "italic bold 18px Arial";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             const textRadius = radius - 35;
@@ -175,7 +175,7 @@ export class Speedometer {
 
         // RPM label
         ctx.fillStyle = "#999999";
-        ctx.font = "bold 11px Arial";
+        ctx.font = "italic bold 11px Arial";
         ctx.textAlign = "center";
         ctx.fillText("RPM x1000", centerX, centerY + 55);
     }
@@ -258,7 +258,7 @@ export class Speedometer {
             // Draw speed numbers
             if (isMainMark && speed % 20 === 0) {
                 ctx.fillStyle = "#ffffff";
-                ctx.font = "bold 18px Arial";
+                ctx.font = "italic bold 18px Arial";
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 const textRadius = radius - 45;
@@ -340,7 +340,7 @@ export class Speedometer {
 
         // Draw "MPH" label
         ctx.fillStyle = "#999999";
-        ctx.font = "bold 11px Arial";
+        ctx.font = "italic bold 11px Arial";
         ctx.fillText("MPH", centerX, centerY + 70);
     }
 }

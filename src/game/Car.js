@@ -55,7 +55,10 @@ export class Car {
         this.shiftDownRpm = 3000;
         this.lastShiftTime = 0;
         this.shiftDuration = 0.2;
-        this.engineBaseForce = 2400;
+        this.engineBaseForce = 1500;
+        this.throttleResponseTime = 0.3; // seconds to reach commanded throttle
+        this.launchFullSpeedMs = 18; // speed where full torque is available
+        this.minLaunchScale = 0.15;
         this.dragCoeff = 0.02;
         this.downforceCoeff = 0.1;
         this.sleepSpeedThreshold = 0.12;
@@ -84,24 +87,22 @@ export class Car {
 
         this.world.createCollider(colDesc, this.chassisBody);
 
-        // --- SUPER OBVIOUS DEBUG MESH FOR CHASSIS ---
-        const debugGeo = new THREE.BoxGeometry(
-            halfExtents.x * 2,
-            halfExtents.y * 2,
-            halfExtents.z * 2
-        );
-        const debugMat = new THREE.MeshBasicMaterial({
-            color: 0xff00ff,
-            wireframe: true,
-            depthTest: false,
-            transparent: true,
-            opacity: 1.0,
-        });
-        this.collisionDebugMesh = new THREE.Mesh(debugGeo, debugMat);
-        this.collisionDebugMesh.position.set(0, 0, 0);
-        this.group.add(this.collisionDebugMesh);
-        this.collisionDebugMesh.visible = true;
-        console.log("Created collisionDebugMesh", this.collisionDebugMesh);
+        // const debugGeo = new THREE.BoxGeometry(
+        //     halfExtents.x * 2,
+        //     halfExtents.y * 2,
+        //     halfExtents.z * 2
+        // );
+        // const debugMat = new THREE.MeshBasicMaterial({
+        //     color: 0xff00ff,
+        //     wireframe: true,
+        //     depthTest: false,
+        //     transparent: true,
+        //     opacity: 1.0,
+        // });
+        // this.collisionDebugMesh = new THREE.Mesh(debugGeo, debugMat);
+        // this.collisionDebugMesh.position.set(0, 0, 0);
+        // this.group.add(this.collisionDebugMesh);
+        // this.collisionDebugMesh.visible = true;
 
         // -------- chassis mesh ----------
         this.chassisMesh = null;
@@ -121,8 +122,8 @@ export class Car {
         // Explicit wheel layout relative to chassis center
         const wheelBase = 3.0; // distance between front and rear axles (Z)
         const trackWidth = 1.8; // distance between left and right wheels (X)
-        const halfWheelBase = wheelBase * 0.5;
-        const halfTrack = trackWidth * 0.5;
+        const halfWheelBase = wheelBase * 0.6;
+        const halfTrack = trackWidth * 0.65;
 
         // 0 = FL, 1 = FR, 2 = RL, 3 = RR (in chassis local space)
         const wheels = [
@@ -208,6 +209,7 @@ export class Car {
             .then(({ chassisMesh, wheelMeshes }) => {
                 if (chassisMesh) {
                     this.chassisMesh = chassisMesh;
+                    this.chassisMesh.position.x += 0.1; // shift body slightly left
                     this.chassisMesh.position.y -= this.chassisVisualDrop;
                     this.group.add(chassisMesh);
                 }
@@ -226,6 +228,7 @@ export class Car {
 
         // -------- input state ----------
         this.keys = {};
+        this.rawEngineInput = 0;
         this.engineInput = 0;
         this.steerInput = 0;
         this.brakeInput = 0;
@@ -267,6 +270,21 @@ export class Car {
         return this.controlProvider;
     }
 
+    /**
+     * Get the direction of motion of the car in world space (forward if speed 0 or slow)
+     * @return {THREE.Vector3} Direction of motion as a normalized vector in world space
+     *
+     */
+    getDirectionofMotion() {
+        if (this.chassisBody === null || this.getCarMph() < 2) {
+            return new THREE.Vector3(0, 0, 1); // Default forward
+        }
+
+        const linvel = this.chassisBody.linvel();
+        const direction = new THREE.Vector3(linvel.x, 0, linvel.z).normalize();
+        return direction;
+    }
+
     getCarMph() {
         const linvel = this.chassisBody.linvel();
         const speedMs = Math.sqrt(
@@ -288,7 +306,7 @@ export class Car {
         if (k["KeyD"]) steer -= 1;
         if (k["Space"]) brake = 1;
 
-        this.engineInput = engine;
+        this.rawEngineInput = engine;
         this.steerInput = steer;
         this.brakeInput = brake;
     }
@@ -303,31 +321,48 @@ export class Car {
 
     update(dt) {
         const externalControls = this.getControlInputs(dt);
+        let requestedEngineInput = 0;
         if (externalControls) {
             const { engine = 0, steer = 0, brake = 0 } = externalControls;
-            this.engineInput = THREE.MathUtils.clamp(engine, -1, 1);
+            requestedEngineInput = THREE.MathUtils.clamp(engine, -1, 1);
             this.steerInput = THREE.MathUtils.clamp(steer, -1, 1);
             this.brakeInput = THREE.MathUtils.clamp(brake, 0, 1);
         } else if (this.enableKeyboard) {
             this.handleInput();
+            requestedEngineInput = this.rawEngineInput;
         } else {
-            this.engineInput = 0;
+            requestedEngineInput = 0;
             this.steerInput = 0;
             this.brakeInput = 0;
         }
+
+        this.rawEngineInput = requestedEngineInput;
+
+        const throttleBlend =
+            this.throttleResponseTime > 0 && dt > 0
+                ? Math.min(1, dt / this.throttleResponseTime)
+                : 1;
+        this.engineInput = THREE.MathUtils.lerp(
+            this.engineInput,
+            this.rawEngineInput,
+            throttleBlend
+        );
+
         const time = performance.now() / 1000;
 
         // 1. Determine Speed & Direction
         const speedMph = this.getCarMph();
         const speedMs = speedMph * 0.44704;
 
+        const gearInput = this.rawEngineInput;
+
         // 2. Automatic Gearbox Logic
         // Switch to Reverse if stopped and braking
-        if (this.engineInput < 0 && speedMph < 3 && this.currentGear > 0) {
+        if (gearInput < 0 && speedMph < 3 && this.currentGear > 0) {
             this.currentGear = -1;
         }
         // Switch to 1st if throttle and in Reverse/Neutral
-        else if (this.engineInput > 0 && this.currentGear <= 0) {
+        else if (gearInput > 0 && this.currentGear <= 0) {
             this.currentGear = 1;
         }
 
@@ -388,10 +423,12 @@ export class Car {
             // If Gear > 0 (Forward): Input > 0 -> Positive Force. Input < 0 -> Negative Force (Braking/Reverse torque).
             // If Gear < 0 (Reverse): Input < 0 -> Negative Force (Accelerating backwards). Input > 0 -> Positive Force (Braking).
 
-            const speedMs = speedMph * 0.44704;
-
-            // at 0 m/s -> 20% of force, at >= 10 m/s -> 100%
-            const launchScale = THREE.MathUtils.clamp(speedMs / 10, 0.2, 1.0);
+            // at 0 m/s -> minLaunchScale, reach 100% at launchFullSpeedMs
+            const launchScale = THREE.MathUtils.clamp(
+                speedMs / this.launchFullSpeedMs,
+                this.minLaunchScale,
+                1.0
+            );
 
             // absolute ratio for calculation, direction comes from input
             force =
@@ -485,9 +522,10 @@ export class Car {
                 localPos.z += this.frontWheelForwardOffset;
             }
 
-            if (i === 0 || i === 2) {
-                localPos.x -= this.leftWheelInwardOffset;
-            }
+            // Remove left wheel inward offset for symmetry
+            // if (i === 0 || i === 2) {
+            //     localPos.x -= this.leftWheelInwardOffset;
+            // }
 
             slot.position.copy(localPos);
 

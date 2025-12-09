@@ -22,8 +22,8 @@ import { Pass, FullScreenQuad } from "three/addons/postprocessing/Pass.js";
 import { VelocityShader } from "./VelocityShader.js";
 import { GeometryShader } from "./GeometryShader.js";
 import { CompositeShader } from "./CompositeShader.js";
-import { BlueNoiseGenerator } from "../../blue-noise-generation/src/BlueNoiseGenerator.js";
-import { RendererState } from "../../shader-replacement/src/RendererState.js";
+import { BlueNoiseGenerator } from "../blue-noise-generation/src/BlueNoiseGenerator.js";
+import { RendererState } from "../../shader-replacement/RendererState.js";
 import { traverseVisibleMeshes } from "./utils.js";
 
 const _blackColor = new Color(0, 0, 0);
