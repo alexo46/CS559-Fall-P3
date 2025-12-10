@@ -229,7 +229,7 @@ export class StartScreen {
 
             <div class="controls-info">
                 <div><strong>W/S</strong> - Throttle/Brake | <strong>A/D</strong> - Steer | <strong>Space</strong> - Handbrake</div>
-                <div><strong>F3</strong> - Toggle Debug Panel</div>
+                <div><strong>F3</strong> - Toggle Debug Panel | <strong>V</strong> - Toggle Viewpoints Debug</div>
             </div>
         `;
 

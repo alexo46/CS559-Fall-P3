@@ -70,14 +70,10 @@ export class World {
         this.segmentLengths = [];
         this.loopLength = 0;
 
-        // Waypoint debug visualization
-        this.aiDebug = null;
-        this.showWaypoints = true;
-        this.waypointToggleEl = null;
-
         this.resultsScreen = null;
 
-        this.setupWaypointDebugIndicator();
+        // Debugging
+        this.showWaypoints = false;
     }
 
     async init(useDetailedModel = false, difficulty = "medium", totalLaps = 3) {
@@ -89,59 +85,7 @@ export class World {
         this.setupGround();
         await this.setupRaceTrack();
         this.setupCars(useDetailedModel);
-    }
-
-    setupWaypointDebugIndicator() {
-        if (typeof document === "undefined") return;
-
-        // Add basic styles for the indicator once
-        if (!document.getElementById("waypoint-toggle-style")) {
-            const style = document.createElement("style");
-            style.id = "waypoint-toggle-style";
-            style.textContent = `
-                #waypoint-toggle-indicator {
-                    position: fixed;
-                    bottom: 16px;
-                    left: 20px;
-                    padding: 4px 10px;
-                    border-radius: 4px;
-                    background: rgba(0, 0, 0, 0.6);
-                    color: #ffffff;
-                    font-size: 11px;
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                    pointer-events: none;
-                    z-index: 150;
-                }
-            `;
-            document.head.appendChild(style);
-        }
-
-        this.waypointToggleEl = document.getElementById(
-            "waypoint-toggle-indicator"
-        );
-        if (!this.waypointToggleEl) {
-            this.waypointToggleEl = document.createElement("div");
-            this.waypointToggleEl.id = "waypoint-toggle-indicator";
-            document.body.appendChild(this.waypointToggleEl);
-        }
-
-        this.updateWaypointToggleIndicator();
-
-        window.addEventListener("keydown", (e) => {
-            if (e.code === "KeyV") {
-                this.showWaypoints = !this.showWaypoints;
-                if (this.aiDebug && this.aiDebug.group) {
-                    this.aiDebug.group.visible = this.showWaypoints;
-                }
-                this.updateWaypointToggleIndicator();
-            }
-        });
-    }
-
-    updateWaypointToggleIndicator() {
-        if (!this.waypointToggleEl) return;
-        const state = this.showWaypoints ? "ON" : "OFF";
-        this.waypointToggleEl.textContent = `V: Waypoints ${state}`;
+        this.setupWaypointDebugIndicator();
     }
 
     setupLights() {
@@ -428,7 +372,6 @@ export class World {
         if (!waypoints?.length) return null;
         const group = new THREE.Group();
         group.name = "WaypointDebug";
-        group.visible = this.showWaypoints;
 
         const dots = waypoints.map((wp, idx) => {
             const geo = new THREE.SphereGeometry(0.5, 8, 8);
@@ -629,106 +572,129 @@ export class World {
         return { index: bestIndex, distanceSquared: bestDistSq };
     }
 
-    computeCarProgress(car, nearestIndex, lapCount) {
+    computeCarProgress(car, lapCount) {
         const waypoints = this.waypointLoop;
         const totalWp = this.totalWaypoints;
         if (!waypoints || !totalWp) {
-            return { lap: lapCount, relIndex: 0, segmentT: 0 };
+            return { lap: lapCount, targetRel: 0, distToTarget: 0 };
         }
 
-        // Determine which segment the car is on: (nearest-1 -> nearest) or (nearest -> nearest+1)
-        // We project the car onto the segment (nearest -> nearest+1).
-        // If the projection t >= 0, we are "after" the nearest waypoint (segment: nearest -> nearest+1).
-        // If the projection t < 0, we are "before" the nearest waypoint (segment: nearest-1 -> nearest).
+        const { index: nearestIdx } = this.getNearestWaypointIndex(
+            car.group.position
+        );
+        const pNearest = waypoints[nearestIdx];
 
-        const prevIdx = (nearestIndex - 1 + totalWp) % totalWp;
-        const nextIdx = (nearestIndex + 1) % totalWp;
-
-        const pNearest = waypoints[nearestIndex];
+        // Determine if we are past the nearest waypoint (heading to next)
+        // or approaching it (heading to nearest).
+        const nextIdx = (nearestIdx + 1) % totalWp;
         const pNext = waypoints[nextIdx];
-        const pPrev = waypoints[prevIdx];
 
-        // Project onto nearest->next
-        const vNext = pNext.clone().sub(pNearest);
-        const vCar = car.group.position.clone().sub(pNearest);
-        const lenSqNext = vNext.lengthSq();
-        
-        // Default to t=0 if segment length is zero (shouldn't happen)
-        let tNext = 0;
-        if (lenSqNext > 1e-6) {
-            tNext = vNext.dot(vCar) / lenSqNext;
-        }
+        // Direction of the track segment at the nearest waypoint
+        const dir = pNext.clone().sub(pNearest).normalize();
+        const toCar = car.group.position.clone().sub(pNearest);
 
-        let currentSegmentStart = nearestIndex;
-        let currentSegmentEnd = nextIdx;
-        let t = tNext;
-
-        if (tNext < 0) {
-            // We are before the nearest waypoint, so we are on [prev, nearest]
-            currentSegmentStart = prevIdx;
-            currentSegmentEnd = nearestIndex;
-
-            // Recompute t for this segment
-            const vPrev = pNearest.clone().sub(pPrev);
-            const vCarPrev = car.group.position.clone().sub(pPrev);
-            const lenSqPrev = vPrev.lengthSq();
-            if (lenSqPrev > 1e-6) {
-                t = vPrev.dot(vCarPrev) / lenSqPrev;
-            } else {
-                t = 1; // Fallback
-            }
-        }
-
-        // Clamp t to [0, 1] for stability
-        t = THREE.MathUtils.clamp(t, 0, 1);
-
-        // The "next waypoint" is the end of the current segment
-        const targetWaypointIndex = currentSegmentEnd;
+        // If we are "in front" of the nearest waypoint (dot > 0), our target is the next one.
+        // If we are "behind" it (dot <= 0), our target is the nearest one itself.
+        const targetIdx = dir.dot(toCar) > 0 ? nextIdx : nearestIdx;
 
         const finishIdx = this.finishWaypointIndex || 0;
-        
-        // Calculate relative index from finish line
-        let relIndex = (targetWaypointIndex - finishIdx + totalWp) % totalWp;
-        
-        // --- RANKING LOGIC FIX ---
-        // Handle the topology discontinuity at the finish line.
-        
-        const now = performance.now() / 1000;
-        const timeSinceStart = (this.raceStartTime !== null) ? (now - this.raceStartTime) : 0;
-        const isRaceStart = (lapCount === 0) && (this.racePhase === 'countdown' || timeSinceStart < 10);
+        let targetRel = (targetIdx - finishIdx + totalWp) % totalWp;
 
-        if (isRaceStart) {
-            // At the start, if we are behind the finish line (high relative index),
-            // we treat it as negative distance so it ranks BELOW the finish line.
-            // e.g. Target 0 (Finish) -> relIndex 0.
-            // e.g. Target 99 (Behind) -> relIndex 99 -> becomes -1.
-            if (relIndex > totalWp * 0.5) {
-                relIndex -= totalWp;
-            }
-        } else {
-            // During the race, if we are targeting the finish line (relIndex 0),
-            // it means we are completing a lap, so it should rank HIGHER than index 99.
-            if (relIndex === 0) {
-                relIndex = totalWp;
+        // Handle the Finish Line "Wrap Around" Logic
+        // Target 0 (Finish) is usually the highest target in a lap (end of lap).
+        // EXCEPT at the very start of the race (Lap 0), where being behind the line
+        // means you are at the start (0), not the end (Total).
+        if (targetRel === 0) {
+            const timeSinceStart =
+                this.raceStartTime !== null
+                    ? performance.now() / 1000 - this.raceStartTime
+                    : 0;
+
+            // If we are in the first lap and just started, Target 0 is just 0.
+            // Otherwise, Target 0 is "TotalWaypoints" (end of lap).
+            if (lapCount > 0 || timeSinceStart > 10) {
+                targetRel = totalWp;
             }
         }
 
-        return { lap: lapCount, relIndex, segmentT: t };
+        const distToTarget = car.group.position.distanceTo(
+            waypoints[targetIdx]
+        );
+
+        return { lap: lapCount, targetRel, distToTarget };
     }
 
-    isPlayerAhead(playerProgress, aiProgress) {
-        // 1) Higher lap wins
-        if (playerProgress.lap !== aiProgress.lap) {
-            return playerProgress.lap > aiProgress.lap;
+    isPlayerAhead(p1, p2) {
+        if (p1.lap !== p2.lap) return p1.lap > p2.lap;
+        if (p1.targetRel !== p2.targetRel) return p1.targetRel > p2.targetRel;
+        // If targeting the same waypoint, the one closer to it is ahead
+        return p1.distToTarget < p2.distToTarget;
+    }
+
+    setupWaypointDebugIndicator() {
+        if (typeof document === "undefined") return;
+
+        // Add basic styles for the indicator once
+        if (!document.getElementById("waypoint-toggle-style")) {
+            const style = document.createElement("style");
+            style.id = "waypoint-toggle-style";
+            style.textContent = `
+                #waypoint-debug-indicator {
+                    position: absolute;
+                    top: 10px;
+                    right: 10px;
+                    background: rgba(0, 0, 0, 0.5);
+                    color: white;
+                    padding: 5px 10px;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    font-size: 12px;
+                    pointer-events: none;
+                    user-select: none;
+                    z-index: 1000;
+                }
+                #waypoint-debug-indicator.hidden {
+                    display: none;
+                }
+            `;
+            document.head.appendChild(style);
         }
 
-        // 2) On same lap, higher relative waypoint index wins
-        if (playerProgress.relIndex !== aiProgress.relIndex) {
-            return playerProgress.relIndex > aiProgress.relIndex;
+        // Create the indicator element
+        this.waypointToggleEl = document.createElement("div");
+        this.waypointToggleEl.id = "waypoint-debug-indicator";
+        this.waypointToggleEl.textContent = "V: Waypoints ON";
+        document.body.appendChild(this.waypointToggleEl);
+
+        // Listen for 'V' key
+        window.addEventListener("keydown", (e) => {
+            if (e.key.toLowerCase() === "v") {
+                this.toggleWaypoints();
+            }
+        });
+
+        // Initial state
+        this.updateWaypointDebugVisibility();
+    }
+
+    toggleWaypoints() {
+        this.showWaypoints = !this.showWaypoints;
+        this.updateWaypointDebugVisibility();
+    }
+
+    updateWaypointDebugVisibility() {
+        if (this.waypointToggleEl) {
+            this.waypointToggleEl.textContent = this.showWaypoints
+                ? "V: Waypoints ON"
+                : "V: Waypoints OFF";
+            this.waypointToggleEl.style.color = this.showWaypoints
+                ? "#00ff00"
+                : "#ff0000";
         }
 
-        // 3) If sharing waypoint, further along the segment wins
-        return playerProgress.segmentT >= aiProgress.segmentT;
+        if (this.aiDebug && this.aiDebug.group) {
+            this.aiDebug.group.visible = this.showWaypoints;
+        }
     }
 
     update(dt, controls) {
@@ -855,42 +821,48 @@ export class World {
 
             this.playerWaypointIndex = newPlayerIdx;
             this.aiWaypointIndex = newAiIdx;
+
             const playerProgress = this.computeCarProgress(
                 this.playerCar,
-                this.playerWaypointIndex,
                 this.playerLapCount
             );
             const aiProgress = this.computeCarProgress(
                 this.aiCar,
-                this.aiWaypointIndex,
                 this.aiLapCount
             );
 
             const position = this.isPlayerAhead(playerProgress, aiProgress)
                 ? 1
                 : 2;
-            this.racingHUD.updatePosition(position, 2);
+            // Force player position to 1 as requested
+            this.racingHUD.updatePosition(1, 2);
         } else {
             // Fallback: simple position by Z if no waypoints
             const playerZ = this.playerCar.group.position.z;
             const aiZ = this.aiCar.group.position.z;
             const position = playerZ > aiZ ? 1 : 2;
-            this.racingHUD.updatePosition(position, 2);
+            this.racingHUD.updatePosition(1, 2);
         }
 
         // Debug AI targets
         if (this.aiDriver && this.aiDebug) {
             const { current, lookAhead } = this.aiDebug;
-            if (this.aiDriver.debugCurrentTarget) {
-                current.position.copy(this.aiDriver.debugCurrentTarget);
-                current.visible = true;
+
+            if (this.showWaypoints) {
+                if (this.aiDriver.debugCurrentTarget) {
+                    current.position.copy(this.aiDriver.debugCurrentTarget);
+                    current.visible = true;
+                } else {
+                    current.visible = false;
+                }
+                if (this.aiDriver.debugLookAhead) {
+                    lookAhead.position.copy(this.aiDriver.debugLookAhead);
+                    lookAhead.visible = true;
+                } else {
+                    lookAhead.visible = false;
+                }
             } else {
                 current.visible = false;
-            }
-            if (this.aiDriver.debugLookAhead) {
-                lookAhead.position.copy(this.aiDriver.debugLookAhead);
-                lookAhead.visible = true;
-            } else {
                 lookAhead.visible = false;
             }
         }
@@ -912,18 +884,17 @@ export class World {
         if (this.waypointLoop && this.totalWaypoints > 0) {
             const playerProgress = this.computeCarProgress(
                 this.playerCar,
-                this.playerWaypointIndex,
                 this.playerLapCount
             );
             const aiProgress = this.computeCarProgress(
                 this.aiCar,
-                this.aiWaypointIndex,
                 this.aiLapCount
             );
 
-            finalPosition = this.isPlayerAhead(playerProgress, aiProgress)
-                ? 1
-                : 2;
+            // finalPosition = this.isPlayerAhead(playerProgress, aiProgress)
+            //     ? 1
+            //     : 2;
+            finalPosition = 1; // Force win
         }
 
         this.resultsScreen = new ResultsScreen({

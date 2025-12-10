@@ -23,7 +23,7 @@ export class Car {
         this.scene.add(this.group);
 
         this.debugPanel = new VehicleDebugPanel();
-        this.debugPanel.visible = true;
+        this.debugPanel.visible = false;
 
         // -------- tuning ----------
         this.maxEngineForce = 500;
@@ -86,7 +86,6 @@ export class Car {
             .setMass(800);
 
         this.world.createCollider(colDesc, this.chassisBody);
-        lk;
 
         // -------- chassis mesh ----------
         this.chassisMesh = null;
