@@ -108,6 +108,28 @@ export class RacingHUD {
                 align-items: baseline;
                 margin-top: 0.5rem;
             }
+
+            #hud-countdown {
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                font-size: 6rem;
+                font-weight: bold;
+                color: #ffffff;
+                text-shadow: 0 0 10px rgba(0, 0, 0, 0.8),
+                             0 0 20px rgba(0, 0, 0, 0.6);
+                letter-spacing: 0.1em;
+                pointer-events: none;
+                z-index: 200;
+                opacity: 0;
+                transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+            }
+
+            #hud-countdown.visible {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
         `;
         document.head.appendChild(style);
     }
@@ -149,6 +171,8 @@ export class RacingHUD {
                 <div class="hud-title">Race Time</div>
                 <div class="time-value" id="hud-race-time">0:00.000</div>
             </div>
+
+            <div id="hud-countdown"></div>
         `;
 
         // Cache element references after content is added to DOM
@@ -164,6 +188,7 @@ export class RacingHUD {
             lastLap: this.container.querySelector("#hud-last-lap"),
             bestLap: this.container.querySelector("#hud-best-lap"),
             raceTime: this.container.querySelector("#hud-race-time"),
+            countdown: this.container.querySelector("#hud-countdown"),
         };
     }
 
@@ -216,6 +241,20 @@ export class RacingHUD {
         this.elements.raceTime.textContent = this.formatTime(seconds);
     }
 
+    updateCountdown(text) {
+        if (!this.elements.countdown) return;
+        this.elements.countdown.textContent = text;
+    }
+
+    setCountdownVisible(visible) {
+        if (!this.elements.countdown) return;
+        if (visible) {
+            this.elements.countdown.classList.add("visible");
+        } else {
+            this.elements.countdown.classList.remove("visible");
+        }
+    }
+
     set visible(value) {
         this.container.style.display = value ? "block" : "none";
     }
@@ -232,5 +271,10 @@ export class RacingHUD {
         this.updateLastLapTime(null);
         this.updateBestLapTime(null);
         this.updateRaceTime(0);
+
+        if (this.elements.countdown) {
+            this.elements.countdown.textContent = "";
+            this.elements.countdown.classList.remove("visible");
+        }
     }
 }

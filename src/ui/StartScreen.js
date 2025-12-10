@@ -71,6 +71,66 @@ export class StartScreen {
                 box-shadow: 0 0 20px rgba(74, 144, 226, 0.5);
             }
 
+            .difficulty-selection {
+                display: flex;
+                gap: 1.5rem;
+                margin-bottom: 2rem;
+            }
+
+            .difficulty-button {
+                padding: 0.6rem 1.4rem;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                background: rgba(0, 0, 0, 0.25);
+                color: white;
+                cursor: pointer;
+                font-size: 0.9rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                transition: all 0.2s ease;
+            }
+
+            .difficulty-button.selected {
+                background: #4a90e2;
+                border-color: #4a90e2;
+                box-shadow: 0 0 14px rgba(74, 144, 226, 0.7);
+            }
+
+            .laps-selection {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                margin-bottom: 2rem;
+                font-size: 0.95rem;
+                opacity: 0.9;
+            }
+
+            .laps-label {
+                text-transform: uppercase;
+                letter-spacing: 0.12em;
+                font-size: 0.8rem;
+                opacity: 0.8;
+            }
+
+            .laps-button {
+                padding: 0.4rem 0.9rem;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                background: rgba(0, 0, 0, 0.25);
+                color: white;
+                cursor: pointer;
+                font-size: 0.9rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                transition: all 0.2s ease;
+            }
+
+            .laps-button.selected {
+                background: #4a90e2;
+                border-color: #4a90e2;
+                box-shadow: 0 0 14px rgba(74, 144, 226, 0.6);
+            }
+
             .detail-title {
                 font-size: 1.8rem;
                 font-weight: bold;
@@ -152,6 +212,19 @@ export class StartScreen {
                 </div>
             </div>
 
+            <div class="difficulty-selection">
+                <button class="difficulty-button" data-difficulty="easy">Easy</button>
+                <button class="difficulty-button selected" data-difficulty="medium">Medium</button>
+                <button class="difficulty-button" data-difficulty="hard">Hard</button>
+            </div>
+
+            <div class="laps-selection">
+                <span class="laps-label">Laps</span>
+                <button class="laps-button" data-laps="1">1</button>
+                <button class="laps-button selected" data-laps="3">3</button>
+                <button class="laps-button" data-laps="5">5</button>
+            </div>
+
             <button class="start-button" disabled>START RACE</button>
 
             <div class="controls-info">
@@ -161,6 +234,8 @@ export class StartScreen {
         `;
 
         this.selectedDetail = null;
+        this.selectedDifficulty = "medium";
+        this.selectedLaps = 3;
         this.startButton = this.container.querySelector(".start-button");
 
         const options = this.container.querySelectorAll(".detail-option");
@@ -172,10 +247,36 @@ export class StartScreen {
             });
         });
 
+        const difficultyButtons =
+            this.container.querySelectorAll(".difficulty-button");
+        difficultyButtons.forEach((btn) => {
+            btn.addEventListener("click", () => {
+                this.selectedDifficulty = btn.dataset.difficulty;
+                difficultyButtons.forEach((b) =>
+                    b.classList.toggle("selected", b === btn)
+                );
+            });
+        });
+
+        const lapsButtons = this.container.querySelectorAll(".laps-button");
+        lapsButtons.forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const laps = parseInt(btn.dataset.laps, 10) || 3;
+                this.selectedLaps = laps;
+                lapsButtons.forEach((b) =>
+                    b.classList.toggle("selected", b === btn)
+                );
+            });
+        });
+
         this.startButton.addEventListener("click", () => {
             if (this.selectedDetail && this.onStart) {
                 this.hide();
-                this.onStart(this.selectedDetail === "detailed");
+                this.onStart(
+                    this.selectedDetail === "detailed",
+                    this.selectedDifficulty,
+                    this.selectedLaps
+                );
             }
         });
     }

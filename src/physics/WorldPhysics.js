@@ -10,13 +10,13 @@ export class WorldPhysics {
     }
 
     createGround() {
-        const groundBody = this.world.createRigidBody(
-            RAPIER.RigidBodyDesc.fixed()
-        );
-        const groundCollider = RAPIER.ColliderDesc.cuboid(2500, 0.1, 2500)
-            .setTranslation(0, -0.1, 0)
-            .setFriction(0.9);
-        this.world.createCollider(groundCollider, groundBody);
+        // const groundBody = this.world.createRigidBody(
+        //     RAPIER.RigidBodyDesc.fixed()
+        // );
+        // const groundCollider = RAPIER.ColliderDesc.cuboid(2500, 0.1, 2500)
+        //     .setTranslation(0, -0.1, 0)
+        //     .setFriction(0.9);
+        // this.world.createCollider(groundCollider, groundBody);
     }
 
     step(dt) {

@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { World } from "../game/World.js";
-import { OrbitControls } from "three/examples/jsm/Addons.js";
 // import MotionBlur from "../game/environment/MotionBlur.js";
 import { InputManager } from "../input/InputManager.js";
+import { CameraController } from "./CameraController.js";
 
 export class Engine {
     constructor(container) {
@@ -12,7 +12,7 @@ export class Engine {
         this.scene.background = new THREE.Color(0x87ceeb); // sky
 
         this.camera = new THREE.PerspectiveCamera(
-            70,
+            50,
             container.clientWidth / container.clientHeight,
             0.1,
             5000
@@ -24,33 +24,22 @@ export class Engine {
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         container.appendChild(this.renderer.domElement);
 
-        this.controls = new OrbitControls(
+        this.cameraController = new CameraController(
             this.camera,
             this.renderer.domElement
         );
-        this.controls.target.set(0, 0, 0);
-        this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.05;
-        this.controls.maxPolarAngle = Math.PI / 2;
-        this.controls.minDistance = 5;
-        this.controls.maxDistance = 200;
 
         this.input = new InputManager(window);
 
         this.motionBlur = null;
 
-        this.lastPlanePosition = null;
-        this.cameraInitialized = false;
-        this.cameraFollowOffset = new THREE.Vector3(0, 6, 18);
-        this.tempVec = new THREE.Vector3();
-
         this.lastTime = 0;
         window.addEventListener("resize", () => this.onResize());
     }
 
-    async init(useDetailedModel = false) {
+    async init(useDetailedModel = false, difficulty = "medium", totalLaps = 3) {
         this.world = new World(this.scene, this.camera, this.renderer);
-        await this.world.init(useDetailedModel); // waits for racetrack, then car
+        await this.world.init(useDetailedModel, difficulty, totalLaps); // waits for racetrack, then car
 
         // this.motionBlur = new MotionBlur(
         //     this.renderer,
@@ -80,27 +69,10 @@ export class Engine {
         const controls = this.input.update(dt);
         this.world.update(dt, controls);
 
-        const vehicleGroup = this.world?.car?.group ?? this.world?.plane?.group;
-        if (vehicleGroup) {
-            if (!this.cameraInitialized) {
-                const offset = this.cameraFollowOffset
-                    .clone()
-                    .applyQuaternion(vehicleGroup.quaternion);
-                this.camera.position.copy(vehicleGroup.position).add(offset);
-                this.lastPlanePosition = vehicleGroup.position.clone();
-                this.cameraInitialized = true;
-            } else if (this.lastPlanePosition) {
-                const delta = this.tempVec
-                    .copy(vehicleGroup.position)
-                    .sub(this.lastPlanePosition);
-                this.camera.position.add(delta);
-                this.lastPlanePosition.copy(vehicleGroup.position);
-            }
-
-            this.controls.target.copy(vehicleGroup.position);
+        const car = this.world?.car;
+        if (car && this.cameraController) {
+            this.cameraController.update(dt, car);
         }
-
-        this.controls.update();
         if (this.motionBlur) {
             this.motionBlur.render(dt);
         } else {

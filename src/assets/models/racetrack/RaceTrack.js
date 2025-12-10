@@ -35,6 +35,7 @@ export function createRaceTrack(options = {}) {
         { name: "race_track", file: "demo_track/demo-racetrack.glb" },
         { name: "grandstand_spawns", file: "demo_track/grandstand-spawns.glb" },
         { name: "barriers", file: "demo_track/barrier.glb" },
+        { name: "waypoints", file: "demo_track/waypoints.glb" },
     ];
 
     const objectsToLoad = [...defaultObjects, ...extraObjects];

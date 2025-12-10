@@ -86,23 +86,7 @@ export class Car {
             .setMass(800);
 
         this.world.createCollider(colDesc, this.chassisBody);
-
-        // const debugGeo = new THREE.BoxGeometry(
-        //     halfExtents.x * 2,
-        //     halfExtents.y * 2,
-        //     halfExtents.z * 2
-        // );
-        // const debugMat = new THREE.MeshBasicMaterial({
-        //     color: 0xff00ff,
-        //     wireframe: true,
-        //     depthTest: false,
-        //     transparent: true,
-        //     opacity: 1.0,
-        // });
-        // this.collisionDebugMesh = new THREE.Mesh(debugGeo, debugMat);
-        // this.collisionDebugMesh.position.set(0, 0, 0);
-        // this.group.add(this.collisionDebugMesh);
-        // this.collisionDebugMesh.visible = true;
+        lk;
 
         // -------- chassis mesh ----------
         this.chassisMesh = null;
@@ -271,18 +255,41 @@ export class Car {
     }
 
     /**
-     * Get the direction of motion of the car in world space (forward if speed 0 or slow)
-     * @return {THREE.Vector3} Direction of motion as a normalized vector in world space
-     *
+     * Get the azimuth angle of the car's motion (or orientation if stopped).
+     * @return {number} Angle in radians (0 to 2PI)
      */
     getDirectionofMotion() {
-        if (this.chassisBody === null || this.getCarMph() < 2) {
-            return new THREE.Vector3(0, 0, 1); // Default forward
+        const speed = this.getCarMph();
+
+        // 1. If stopped/slow, return the physical direction the car is FACING.
+        // This prevents the camera from snapping to 0,0,1 when you park.
+        if (this.chassisBody === null || speed < 5) {
+            // Increased threshold slightly for stability
+            return this.getCarOrientation();
         }
 
+        // 2. If moving, calculate the angle of the VELOCITY vector.
         const linvel = this.chassisBody.linvel();
-        const direction = new THREE.Vector3(linvel.x, 0, linvel.z).normalize();
-        return direction;
+
+        // Math.atan2(x, z) gives the angle relative to the Z axis (Forward)
+        // This aligns with how Three.js typically handles rotation.y
+        return Math.atan2(linvel.x, linvel.z);
+    }
+
+    /**
+     * Gets the car's horizontal orientation in radians
+     *
+     * @return {number} Orientation angle in radians
+     */
+    getCarOrientation() {
+        const q = this.group.quaternion;
+        const euler = new THREE.Euler().setFromQuaternion(q, "YXZ");
+        return euler.y;
+    }
+
+    getPosition() {
+        const t = this.chassisBody.translation();
+        return new THREE.Vector3(t.x, t.y, t.z);
     }
 
     getCarMph() {

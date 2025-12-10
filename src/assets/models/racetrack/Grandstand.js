@@ -11,7 +11,6 @@ export class Grandstand {
         this.stepHeight = 0.6;
         this.stepDepth = 1.2;
 
-        // --- 1. THE WRAPPER (Holds the World Transform) ---
         this.wrapper = new THREE.Group();
 
         // Apply Position
@@ -29,16 +28,7 @@ export class Grandstand {
         } else if (config.rotationY) {
             this.wrapper.rotation.y = config.rotationY;
         }
-
-        // --- 2. THE MESH GROUP (Holds the Geometry) ---
         this.meshGroup = new THREE.Group();
-
-        // --- 3. THE MAGIC FIX ---
-        // Blender exported Y-Forward, Z-Up.
-        // Three.js builds Y-Up, -Z-Forward.
-        // Rotating X by +90 degrees aligns internal Y (Up) to External Z (Up)
-        // and internal -Z (Front) to External Y (Forward/Track).
-        // this.meshGroup.rotation.x = -Math.PI / 2;
 
         // Add mesh group to wrapper
         this.wrapper.add(this.meshGroup);
@@ -68,11 +58,7 @@ export class Grandstand {
         this.scene.add(this.wrapper);
     }
 
-    // ... (Keep _generateCrowdTexture, _buildStructure, _buildRoof, _populateCrowd EXACTLY the same) ...
-    // Just copy/paste your existing methods below here.
-
     _generateCrowdTexture() {
-        // ... paste your existing code ...
         const canvas = document.createElement("canvas");
         canvas.width = 64;
         canvas.height = 128;
