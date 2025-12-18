@@ -301,7 +301,7 @@ export class World {
         this.aiCar = new Car(this.physics, this.scene, useDetailedModel, {
             enableKeyboard: false,
         });
-        this.aiCar.chassisBody.setTranslation({ x: 8, y: 5, z: -5 }, true);
+        this.aiCar.chassisBody.setTranslation({ x: 8, y: 5, z: 0 }, true);
 
         const aiAxes = new THREE.AxesHelper(3);
         aiAxes.position.y = 1;
@@ -363,6 +363,8 @@ export class World {
 
         // Debug visuals for waypoints and targets
         this.aiDebug = this.addWaypointDebug(waypointLoop);
+
+        this._progressState = {};
     }
 
     /**
@@ -424,7 +426,6 @@ export class World {
         const wpRegex = /Waypoint(\d+)_axis/i;
 
         trackGroup.traverse((child) => {
-            console.log(child.name);
             if (!child.name) return;
             const match = child.name.match(wpRegex);
             if (match) {
@@ -448,7 +449,6 @@ export class World {
                 waypoints.push(p);
             });
 
-        console.log(`Loaded ${waypoints.length} Blender waypoints`);
         return waypoints;
     }
 
@@ -697,6 +697,160 @@ export class World {
         }
     }
 
+    getWaypointSegmentForCar(car) {
+        const waypoints = this.waypointLoop;
+        if (!car?.group?.position || !waypoints?.length) {
+            return { index: 0, distance: Infinity };
+        }
+
+        const n = waypoints.length;
+        const px = car.group.position.x;
+        const pz = car.group.position.z;
+
+        let bestI = 0;
+        let bestDistSq = Infinity;
+        let bestRemaining = Infinity;
+
+        for (let i = 0; i < n; i++) {
+            const a = waypoints[i];
+            const b = waypoints[(i + 1) % n];
+
+            const ax = a.x,
+                az = a.z;
+            const bx = b.x,
+                bz = b.z;
+
+            const dx = bx - ax;
+            const dz = bz - az;
+
+            const lenSq = dx * dx + dz * dz;
+            if (lenSq < 1e-8) continue;
+
+            // t = projection factor onto segment, clamped to [0,1]
+            let t = ((px - ax) * dx + (pz - az) * dz) / lenSq;
+            if (t < 0) t = 0;
+            else if (t > 1) t = 1;
+
+            const cx = ax + t * dx;
+            const cz = az + t * dz;
+
+            const ex = px - cx;
+            const ez = pz - cz;
+            const distSq = ex * ex + ez * ez;
+
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                bestI = i;
+
+                const segLen = Math.sqrt(lenSq);
+                bestRemaining = (1 - t) * segLen; // distance to end waypoint along segment
+            }
+        }
+
+        return { index: bestI, distance: bestRemaining };
+    }
+
+    precomputeWaypointDistances() {
+        const waypoints = this.waypointLoop;
+        if (!waypoints || waypoints.length < 2) {
+            this.segmentLengths = [];
+            this.segmentPrefix = [0];
+            this.loopLength = 0;
+            return;
+        }
+
+        const n = waypoints.length;
+        this.segmentLengths = new Array(n);
+        this.segmentPrefix = new Array(n + 1);
+        this.segmentPrefix[0] = 0;
+
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+            const a = waypoints[i];
+            const b = waypoints[(i + 1) % n];
+            const len = a.distanceTo(b);
+            this.segmentLengths[i] = len;
+            total += len;
+            this.segmentPrefix[i + 1] = total;
+        }
+        this.loopLength = total;
+    }
+
+    getProgressOnSegmentXZ(pos, segIndex) {
+        const wps = this.waypointLoop;
+        const n = wps.length;
+        const a = wps[segIndex];
+        const b = wps[(segIndex + 1) % n];
+
+        const dx = b.x - a.x,
+            dz = b.z - a.z;
+        const px = pos.x - a.x,
+            pz = pos.z - a.z;
+
+        const lenSq = dx * dx + dz * dz;
+        if (lenSq < 1e-8) return 0;
+
+        let t = (px * dx + pz * dz) / lenSq; // 0..1 along the segment (projection factor)
+        if (t < 0) t = 0;
+        else if (t > 1) t = 1;
+
+        return t * this.segmentLengths[segIndex]; // meters along that segment from its start
+    }
+
+    unwrapRel(rel, lastRel, loopLength) {
+        if (lastRel == null) return rel;
+
+        let d = rel - lastRel;
+        if (d > loopLength * 0.5) rel -= loopLength;
+        if (d < -loopLength * 0.5) rel += loopLength;
+        return rel;
+    }
+
+    getCarProgressRelativeToFinish(car, lapCount, stateKey) {
+        const wps = this.waypointLoop;
+        if (!car?.group || !wps?.length || !this.loopLength) return 0;
+
+        const finishIdx = this.finishWaypointIndex || 0;
+
+        const seg = this.getWaypointSegmentForCar(car).index;
+        const along = this.getProgressOnSegmentXZ(car.group.position, seg);
+
+        const abs = this.segmentPrefix[seg] + along;
+        const finishAbs = this.segmentPrefix[finishIdx];
+
+        const relRaw = (abs - finishAbs + this.loopLength) % this.loopLength;
+
+        this._progressState ??= {};
+        const lastRel = this._progressState[stateKey];
+
+        let rel;
+        if (lastRel == null) {
+            rel = relRaw;
+            if (rel > this.loopLength * 0.5) rel -= this.loopLength;
+        } else {
+            rel = this.unwrapRel(relRaw, lastRel, this.loopLength);
+        }
+
+        this._progressState[stateKey] = rel;
+
+        return lapCount * this.loopLength + rel;
+    }
+
+    getPlayerPlacing() {
+        const p = this.getCarProgressRelativeToFinish(
+            this.playerCar,
+            this.playerLapCount,
+            "player"
+        );
+        const a = this.getCarProgressRelativeToFinish(
+            this.aiCar,
+            this.aiLapCount,
+            "ai"
+        );
+
+        return p >= a ? 1 : 2;
+    }
+
     update(dt, controls) {
         const speed = this.car.getCarMph();
         const rpm = this.car.getRPM();
@@ -782,7 +936,6 @@ export class World {
                 if (prevPlayerRel > wrapHigh && newPlayerRel < wrapLow) {
                     const lapTime = currentLapTime;
 
-                    // Don't count an instant first "lap" at start
                     if (this.currentLap > 1 || lapTime > 5) {
                         this.lapTimes.push(lapTime);
                         this.racingHUD.updateLastLapTime(lapTime);
@@ -822,20 +975,9 @@ export class World {
             this.playerWaypointIndex = newPlayerIdx;
             this.aiWaypointIndex = newAiIdx;
 
-            const playerProgress = this.computeCarProgress(
-                this.playerCar,
-                this.playerLapCount
-            );
-            const aiProgress = this.computeCarProgress(
-                this.aiCar,
-                this.aiLapCount
-            );
+            const position = this.getPlayerPlacing();
 
-            const position = this.isPlayerAhead(playerProgress, aiProgress)
-                ? 1
-                : 2;
-            // Force player position to 1 as requested
-            this.racingHUD.updatePosition(1, 2);
+            this.racingHUD.updatePosition(position, 2);
         } else {
             // Fallback: simple position by Z if no waypoints
             const playerZ = this.playerCar.group.position.z;
@@ -882,19 +1024,7 @@ export class World {
         // Determine final position one last time
         let finalPosition = 1;
         if (this.waypointLoop && this.totalWaypoints > 0) {
-            const playerProgress = this.computeCarProgress(
-                this.playerCar,
-                this.playerLapCount
-            );
-            const aiProgress = this.computeCarProgress(
-                this.aiCar,
-                this.aiLapCount
-            );
-
-            // finalPosition = this.isPlayerAhead(playerProgress, aiProgress)
-            //     ? 1
-            //     : 2;
-            finalPosition = 1; // Force win
+            finalPosition = this.getPlayerPlacing();
         }
 
         this.resultsScreen = new ResultsScreen({

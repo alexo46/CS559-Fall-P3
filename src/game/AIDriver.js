@@ -95,7 +95,6 @@ export class AIDriver {
     nextWaypoint(position, carForward = null) {
         if (!this.waypoints.length) return null;
 
-        // If we have forward direction, only consider forward waypoints
         if (carForward) {
             let bestIdx = this.currentIndex;
             let bestScore = -Infinity;
